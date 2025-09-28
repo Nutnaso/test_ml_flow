@@ -80,3 +80,55 @@ jobs:
           name: mlflow-artifacts
           path: mlruns/
           if-no-files-found: ignore
+
+  # .github/workflows/main.yml (เติมใน jobs:)
+  train:
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    env:
+      MLFLOW_TRACKING_URI: file://${{ github.workspace }}/mlruns
+      MPLBACKEND: Agg
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install mlflow pandas numpy scikit-learn joblib matplotlib openpyxl; fi
+
+      - name: Validate
+        run: python mlops_pipeline/script/01_data_validation.py
+
+      - name: Preprocess
+        id: preproc
+        run: python mlops_pipeline/script/02_data_preprocessing.py
+        # สคริปต์ของคุณเขียนผล run_id ลง $GITHUB_OUTPUT อยู่แล้ว
+
+      - name: Train & Register
+        run: |
+          echo "Using preprocessing_run_id=${{ steps.preproc.outputs.preprocessing_run_id }}"
+          python mlops_pipeline/script/03_train_evaluate_register.py "${{ steps.preproc.outputs.preprocessing_run_id }}" DryBeans-Classifier
+
+      # อัปโหลดชุดโมเดลพร้อมตัวแปลง (สะดวกต่อการเสิร์ฟนอก MLflow)
+      - name: Upload model bundle (serving_bundle.pkl)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-bundle
+          path: model_bundle/
+          if-no-files-found: error
+
+      # อัปโหลดทั้งโฟลเดอร์ mlruns (รวม Registry/Artifacts)
+      - name: Upload MLflow artifacts for inspection
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlflow-artifacts
+          path: mlruns/
+          if-no-files-found: ignore
