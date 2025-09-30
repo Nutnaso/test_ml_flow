@@ -1,54 +1,42 @@
-import json
+# =============================================
+# 03_train_evaluate_register.py — Mushroom EfficientNet Training
+# =============================================
 import os
 import sys
-from typing import Any, Dict
-
+import json
 import joblib
-import matplotlib.pyplot as plt
 import mlflow
-import mlflow.sklearn
+import mlflow.tensorflow
 import numpy as np
-import pandas as pd
+import matplotlib.pyplot as plt
 from mlflow.artifacts import download_artifacts
-from mlflow.models import infer_signature
-from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (accuracy_score, classification_report,
-                             confusion_matrix, f1_score, precision_score,
-                             recall_score)
-from sklearn.model_selection import GridSearchCV
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.svm import SVC
+from sklearn.metrics import classification_report, confusion_matrix
+from tensorflow.keras.applications import EfficientNetB0
+from tensorflow.keras.layers import Dense, Dropout, GlobalAveragePooling2D
+from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+import tensorflow as tf
 
-
-MODELS_AND_GRIDS: Dict[str, Any] = {
-    "svm_rbf": (SVC(probability=True), {"C": [0.5, 1, 2], "gamma": ["scale", "auto"]}),
-    "logreg": (LogisticRegression(max_iter=2000), {"C": [0.5, 1, 2]}),
-    "rf": (RandomForestClassifier(random_state=42), {"n_estimators": [200, 400], "max_depth": [None, 10, 20]}),
-    "gbm": (GradientBoostingClassifier(random_state=42), {"n_estimators": [150, 300], "learning_rate": [0.05, 0.1]}),
-    "knn": (KNeighborsClassifier(), {"n_neighbors": [3, 5, 11]})
-}
-
-
-DEF_EXPERIMENT = "DryBeans - Model Training"
+DEF_EXPERIMENT = "Mushroom - EfficientNet Training"
 
 
 def _load_artifacts_from_preprocessing_run(run_id: str):
-    local_proc = download_artifacts(run_id=run_id, artifact_path="processed_data")
+    """โหลด label encoder และ transform config จาก preprocessing run"""
     local_trans = download_artifacts(run_id=run_id, artifact_path="transformers")
-
-    train_df = pd.read_csv(os.path.join(local_proc, "train.csv"))
-    test_df = pd.read_csv(os.path.join(local_proc, "test.csv"))
-
-    feature_transformer = joblib.load(os.path.join(local_trans, "feature_transformer.pkl"))
     label_encoder_obj = joblib.load(os.path.join(local_trans, "label_encoder.pkl"))
-    return train_df, test_df, feature_transformer, label_encoder_obj
+
+    local_preproc = download_artifacts(run_id=run_id, artifact_path="preprocessing")
+    with open(os.path.join(local_preproc, "transforms.json"), "r", encoding="utf-8") as f:
+        transform_config = json.load(f)
+
+    return label_encoder_obj, transform_config
 
 
 def _plot_and_log_confusion(cm: np.ndarray, classes: list, artifact_dir="eval_artifacts"):
     os.makedirs(artifact_dir, exist_ok=True)
     fig = plt.figure(figsize=(8, 6))
-    plt.imshow(cm, interpolation='nearest')
+    plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
     plt.title('Confusion Matrix')
     plt.colorbar()
     tick_marks = np.arange(len(classes))
@@ -60,100 +48,111 @@ def _plot_and_log_confusion(cm: np.ndarray, classes: list, artifact_dir="eval_ar
     path = os.path.join(artifact_dir, "confusion_matrix.png")
     fig.savefig(path, bbox_inches='tight')
     plt.close(fig)
-
     mlflow.log_artifacts(artifact_dir, artifact_path="evaluation")
 
 
-def train_evaluate_register(preprocessing_run_id: str, model_registry_name: str = "DryBeans-Classifier"):
+def train_evaluate_register(preprocessing_run_id: str,
+                            dataset_dir: str = "dataset",
+                            model_registry_name: str = "Mushroom-EfficientNet",
+                            batch_size: int = 16,
+                            epochs: int = 1):
+    """Train, evaluate and register EfficientNet using preprocessing artifacts."""
+
+    # GPU detection
+    gpus = tf.config.list_physical_devices('GPU')
+    device = "/GPU:0" if gpus else "/CPU:0"
+    print(f"✅ Using device: {device}")
+
     mlflow.set_experiment(DEF_EXPERIMENT)
 
-    with mlflow.start_run(run_name=f"gridsearch_models_from_{preprocessing_run_id}"):
-        mlflow.set_tag("ml.step", "model_training_evaluation")
-        mlflow.log_param("preprocessing_run_id", preprocessing_run_id)
+    # Load preprocessing artifacts
+    label_encoder_obj, transform_config = _load_artifacts_from_preprocessing_run(preprocessing_run_id)
+    classes_order = label_encoder_obj.get("classes_", [])
+    img_size = tuple(transform_config.get("resize", (256, 256)))
 
-        train_df, test_df, feature_transformer, label_encoder_obj = _load_artifacts_from_preprocessing_run(preprocessing_run_id)
+    with tf.device(device):
+        with mlflow.start_run(run_name=f"efficientnet_from_{preprocessing_run_id}"):
+            mlflow.set_tag("ml.step", "model_training_evaluation")
+            mlflow.log_param("preprocessing_run_id", preprocessing_run_id)
+            mlflow.log_param("img_size", img_size)
+            mlflow.log_param("batch_size", batch_size)
+            mlflow.log_param("epochs", epochs)
+            mlflow.log_param("num_classes", len(classes_order))
 
-        label_col = label_encoder_obj.get("label_col", "Class")
-        classes_order = label_encoder_obj.get("classes_", [])
+            # Data pipeline
+            datagen = ImageDataGenerator(rescale=1./255)
 
-        X_train = train_df.drop(columns=[label_col])
-        y_train = train_df[label_col]
-        X_test = test_df.drop(columns=[label_col])
-        y_test = test_df[label_col]
+            train_gen = datagen.flow_from_directory(
+                os.path.join(dataset_dir, "train"),
+                target_size=img_size,
+                batch_size=batch_size,
+                class_mode="categorical"
+            )
+            val_gen = datagen.flow_from_directory(
+                os.path.join(dataset_dir, "val"),
+                target_size=img_size,
+                batch_size=batch_size,
+                class_mode="categorical"
+            )
+            test_gen = datagen.flow_from_directory(
+                os.path.join(dataset_dir, "test"),
+                target_size=img_size,
+                batch_size=batch_size,
+                class_mode="categorical",
+                shuffle=False
+            )
 
-        # Grid search across candidate models with CV=5 using weighted F1
-        best_model_name, best_estimator, best_score, best_params = None, None, -np.inf, None
-        cv_results_summary = {}
+            # Model
+            base_model = EfficientNetB0(weights="imagenet", include_top=False, input_shape=(*img_size, 3))
+            x = GlobalAveragePooling2D()(base_model.output)
+            x = Dropout(0.3)(x)
+            output = Dense(len(classes_order), activation="softmax")(x)
+            model = Model(inputs=base_model.input, outputs=output)
 
-        for name, (estimator, grid) in MODELS_AND_GRIDS.items():
-            clf = GridSearchCV(estimator, grid, cv=5, scoring='f1_weighted', n_jobs=-1)
-            clf.fit(X_train, y_train)
-            cv_results_summary[name] = {
-                "best_score": float(clf.best_score_),
-                "best_params": clf.best_params_
-            }
-            mlflow.log_param(f"{name}_best_params", json.dumps(clf.best_params_))
-            mlflow.log_metric(f"{name}_cv_best_f1_weighted", float(clf.best_score_))
-            if clf.best_score_ > best_score:
-                best_score = clf.best_score_
-                best_estimator = clf.best_estimator_
-                best_model_name = name
-                best_params = clf.best_params_
+            model.compile(optimizer=Adam(learning_rate=1e-4),
+                          loss="categorical_crossentropy",
+                          metrics=["accuracy"])
 
-        # Fit best on full train
-        best_estimator.fit(X_train, y_train)
+            # Train
+            history = model.fit(
+                train_gen,
+                validation_data=val_gen,
+                epochs=epochs
+            )
 
-        # Evaluate on test
-        y_pred = best_estimator.predict(X_test)
-        acc = accuracy_score(y_test, y_pred)
-        f1w = f1_score(y_test, y_pred, average='weighted')
-        precw = precision_score(y_test, y_pred, average='weighted', zero_division=0)
-        recw = recall_score(y_test, y_pred, average='weighted')
+            # Evaluate
+            loss, acc = model.evaluate(test_gen)
+            mlflow.log_metric("test_loss", float(loss))
+            mlflow.log_metric("test_accuracy", float(acc))
 
-        mlflow.log_metric("test_accuracy", float(acc))
-        mlflow.log_metric("test_f1_weighted", float(f1w))
-        mlflow.log_metric("test_precision_weighted", float(precw))
-        mlflow.log_metric("test_recall_weighted", float(recw))
+            # Confusion matrix
+            y_true = test_gen.classes
+            y_pred = np.argmax(model.predict(test_gen), axis=1)
+            cm = confusion_matrix(y_true, y_pred)
+            _plot_and_log_confusion(cm, classes=list(classes_order))
 
-        # Save detailed report
-        report_txt = classification_report(y_test, y_pred, target_names=[str(c) for c in classes_order])
-        os.makedirs("eval_artifacts", exist_ok=True)
-        with open("eval_artifacts/classification_report.txt", "w", encoding="utf-8") as f:
-            f.write(report_txt)
+            # Classification report
+            report_txt = classification_report(y_true, y_pred, target_names=list(classes_order))
+            os.makedirs("eval_artifacts", exist_ok=True)
+            with open("eval_artifacts/classification_report.txt", "w", encoding="utf-8") as f:
+                f.write(report_txt)
+            mlflow.log_artifacts("eval_artifacts", artifact_path="evaluation")
 
-        cm = confusion_matrix(y_test, y_pred)
-        _plot_and_log_confusion(cm, classes=[str(c) for c in classes_order])
+            # Log model
+            mlflow.tensorflow.log_model(
+                model=model,
+                artifact_path="efficientnet_model",
+                registered_model_name=model_registry_name
+            )
 
-        # Persist the whole serving bundle: model + transformers
-        serving_bundle = {
-            "model": best_estimator,
-            "feature_transformer": feature_transformer,
-            "label_encoder": label_encoder_obj,
-        }
-        os.makedirs("model_bundle", exist_ok=True)
-        joblib.dump(serving_bundle, "model_bundle/serving_bundle.pkl")
-        mlflow.log_artifacts("model_bundle", artifact_path="model_bundle")
-
-        # Log model with signature
-        signature = infer_signature(X_train, best_estimator.predict(X_train))
-        mlflow.sklearn.log_model(
-            sk_model=best_estimator,
-            artifact_path="drybeans_model",
-            signature=signature,
-            registered_model_name=model_registry_name,
-        )
-
-        mlflow.log_param("selected_model", best_model_name)
-        mlflow.log_param("selected_model_best_params", json.dumps(best_params))
-
-        print("Training + evaluation complete. Selected:", best_model_name)
-        print("CV summary:", json.dumps(cv_results_summary, indent=2))
+            print("Training complete. Test accuracy:", acc)
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python 03_train_evaluate_register.py <preprocessing_run_id> [registry_name]")
+        print("Usage: python 03_train_evaluate_register.py <preprocessing_run_id> [dataset_dir] [registry_name]")
         sys.exit(1)
     run_id = sys.argv[1]
-    registry_name = sys.argv[2] if len(sys.argv) > 2 else "DryBeans-Classifier"
-    train_evaluate_register(run_id, registry_name)
+    dataset_dir = sys.argv[2] if len(sys.argv) > 2 else "dataset"
+    registry_name = sys.argv[3] if len(sys.argv) > 3 else "Mushroom-EfficientNet"
+    train_evaluate_register(run_id, dataset_dir, registry_name)

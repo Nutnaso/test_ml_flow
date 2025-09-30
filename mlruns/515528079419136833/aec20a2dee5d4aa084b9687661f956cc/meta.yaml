@@ -1,0 +1,15 @@
+artifact_uri: file:///C:/Users/USER/Documents/GitHub/test_ml_flow/mlruns/515528079419136833/aec20a2dee5d4aa084b9687661f956cc/artifacts
+end_time: 1759249262609
+entry_point_name: ''
+experiment_id: '515528079419136833'
+lifecycle_stage: active
+run_id: aec20a2dee5d4aa084b9687661f956cc
+run_name: orderly-koi-276
+run_uuid: aec20a2dee5d4aa084b9687661f956cc
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1759249262502
+status: 3
+tags: []
+user_id: USER

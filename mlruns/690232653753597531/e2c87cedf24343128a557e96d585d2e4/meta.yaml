@@ -1,0 +1,15 @@
+artifact_uri: file:///C:/Users/USER/Documents/GitHub/test_ml_flow/mlruns/690232653753597531/e2c87cedf24343128a557e96d585d2e4/artifacts
+end_time: 1759248032215
+entry_point_name: ''
+experiment_id: '690232653753597531'
+lifecycle_stage: active
+run_id: e2c87cedf24343128a557e96d585d2e4
+run_name: efficientnet_from_7e0278cfb2be475dbd01fb1e23281f9b
+run_uuid: e2c87cedf24343128a557e96d585d2e4
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1759247925471
+status: 4
+tags: []
+user_id: USER

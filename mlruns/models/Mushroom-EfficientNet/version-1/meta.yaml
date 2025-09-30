@@ -1,0 +1,14 @@
+aliases: []
+creation_timestamp: 1759248688993
+current_stage: None
+description: EfficientNet trained on mushroom dataset v1
+last_updated_timestamp: 1759248701066
+name: Mushroom-EfficientNet
+run_id: 472b801cdf2f48baaa6cea0f1974f3d7
+run_link: null
+source: file:///C:/Users/USER/Documents/GitHub/test_ml_flow/mlruns/690232653753597531/472b801cdf2f48baaa6cea0f1974f3d7/artifacts/efficientnet_model
+status: READY
+status_message: null
+storage_location: file:///C:/Users/USER/Documents/GitHub/test_ml_flow/mlruns/690232653753597531/472b801cdf2f48baaa6cea0f1974f3d7/artifacts/efficientnet_model
+user_id: null
+version: 1

@@ -1,88 +1,134 @@
+# =============================================
+# 02_data_preprocessing.py — Mushroom Images
+# =============================================
 import os
-import joblib
+import json
 import mlflow
+import torch
 import numpy as np
-import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader, WeightedRandomSampler
+import joblib
 
 
-
-def preprocess_data(
-    data_path: str = "Dry_Bean_Dataset.xlsx",
-    sheet_name: str = None,
-    label_col: str = "Class",
-    test_size: float = 0.25,
-    random_state: int = 42,
-    experiment_name: str = "DryBeans - Data Preprocessing",
+def preprocess_images(
+    data_path: str = "dataset",
+    batch_size: int = 32,
+    num_workers: int = 2,
+    resize: tuple[int, int] = (256, 256),   # <-- เพิ่ม parameter resize
+    experiment_name: str = "Mushroom EfficientNet - Data Preprocessing",
 ):
-    """Split train/test; fit transformers on train; persist transformers + splits as MLflow artifacts.
-    Ensures same transformation is applicable to new/serving data to avoid training-serving skew.
-    """
+    """Prepare DataLoaders for train/val/test with augmentation & class balancing."""
     mlflow.set_experiment(experiment_name)
 
     with mlflow.start_run() as run:
         run_id = run.info.run_id
         mlflow.set_tag("ml.step", "data_preprocessing")
         mlflow.log_param("data_path", os.path.abspath(data_path))
-        mlflow.log_param("test_size", test_size)
-        mlflow.log_param("random_state", random_state)
+        mlflow.log_param("batch_size", batch_size)
+        mlflow.log_param("num_workers", num_workers)
+        mlflow.log_param("resize", resize)
 
-        xls = pd.ExcelFile(data_path)
-        print("Available sheets:", xls.sheet_names)
-        df = pd.read_excel(xls, sheet_name=sheet_name or xls.sheet_names[0])
+        # Augmentation transforms for train
+        train_transform = transforms.Compose([
+            transforms.Resize(resize),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomRotation(15),
+            transforms.ColorJitter(brightness=0.2, contrast=0.2,
+                                   saturation=0.2, hue=0.1),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406],
+                                 [0.229, 0.224, 0.225])
+        ])
 
-        # Split X, y
-        X = df.drop(columns=[label_col])
-        y = df[label_col]
+        # Validation/test transforms (no augmentation)
+        eval_transform = transforms.Compose([
+            transforms.Resize(resize),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406],
+                                 [0.229, 0.224, 0.225])
+        ])
 
-        # Identify numeric columns
-        num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
-        mlflow.log_param("num_feature_count", len(num_cols))
+        datasets_dict = {}
+        dataloaders = {}
 
-        # Train/test split (stratified)
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=random_state, stratify=y
-        )
+        for split in ["train", "val", "test"]:
+            split_path = os.path.join(data_path, split)
+            if not os.path.exists(split_path):
+                continue
 
-        # Fit transformers on TRAIN only
-        scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train[num_cols])
-        X_test_scaled = scaler.transform(X_test[num_cols])
+            ds = datasets.ImageFolder(
+                split_path,
+                transform=train_transform if split == "train" else eval_transform
+            )
 
-        # Encode labels (fit on train only)
-        le = LabelEncoder()
-        y_train_enc = le.fit_transform(y_train)
-        y_test_enc = le.transform(y_test)
+            # =====================
+            # WeightedRandomSampler
+            # =====================
+            if split == "train":
+                targets = [s[1] for s in ds.samples]
+                class_sample_counts = np.bincount(targets)
+                class_weights = 1.0 / class_sample_counts
+                sample_weights = [class_weights[t] for t in targets]
 
-        # Save processed splits
-        os.makedirs("processed_data", exist_ok=True)
-        train_proc = pd.DataFrame(X_train_scaled, columns=num_cols)
-        train_proc[label_col] = y_train_enc
-        test_proc = pd.DataFrame(X_test_scaled, columns=num_cols)
-        test_proc[label_col] = y_test_enc
-        train_proc.to_csv("processed_data/train.csv", index=False)
-        test_proc.to_csv("processed_data/test.csv", index=False)
+                sampler = WeightedRandomSampler(
+                    weights=sample_weights,
+                    num_samples=len(sample_weights),
+                    replacement=True
+                )
+                dl = DataLoader(ds, batch_size=batch_size, sampler=sampler,
+                                num_workers=num_workers)
+                mlflow.log_param("class_sample_counts", class_sample_counts.tolist())
+            else:
+                dl = DataLoader(ds, batch_size=batch_size, shuffle=False,
+                                num_workers=num_workers)
 
-        # Persist transformers for serving (avoid skew)
+            datasets_dict[split] = ds
+            dataloaders[split] = dl
+            mlflow.log_metric(f"{split}_num_images", len(ds))
+
+        # Save class mapping
+        if "train" in datasets_dict:
+            class_to_idx = datasets_dict["train"].class_to_idx
+        else:
+            class_to_idx = next(iter(datasets_dict.values())).class_to_idx
+
+        os.makedirs("preprocessing_artifacts", exist_ok=True)
+        with open("preprocessing_artifacts/class_to_idx.json", "w", encoding="utf-8") as f:
+            json.dump(class_to_idx, f, indent=2)
+
+        # Save transforms config
+        transform_config = {
+            "resize": resize,
+            "normalize_mean": [0.485, 0.456, 0.406],
+            "normalize_std": [0.229, 0.224, 0.225],
+            "augmentation": True
+        }
+        with open("preprocessing_artifacts/transforms.json", "w", encoding="utf-8") as f:
+            json.dump(transform_config, f, indent=2)
+
+        # =====================
+        # Save label encoder
+        # =====================
         os.makedirs("transformers", exist_ok=True)
-        joblib.dump({"scaler": scaler, "num_cols": num_cols}, "transformers/feature_transformer.pkl")
-        joblib.dump({"label_encoder": le, "classes_": le.classes_.tolist(), "label_col": label_col}, "transformers/label_encoder.pkl")
-
-        # Log artifacts
-        mlflow.log_artifacts("processed_data", artifact_path="processed_data")
+        label_encoder_obj = {"classes_": list(class_to_idx.keys())}
+        joblib.dump(label_encoder_obj, "transformers/label_encoder.pkl")
         mlflow.log_artifacts("transformers", artifact_path="transformers")
 
-        # Log simple metrics
-        mlflow.log_metric("training_set_rows", int(len(X_train)))
-        mlflow.log_metric("test_set_rows", int(len(X_test)))
+        # Log other artifacts
+        mlflow.log_artifacts("preprocessing_artifacts", artifact_path="preprocessing")
+        mlflow.log_param("num_classes", len(class_to_idx))
+        mlflow.log_param("classes", list(class_to_idx.keys()))
 
-        print("Preprocessing completed. Run ID:", run_id)
-        print("Label classes order:", list(le.classes_))
+        print("✅ Preprocessing completed. Run ID:", run_id)
+        print("Classes mapping:", class_to_idx)
         if os.getenv("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a") as f:
                 print(f"preprocessing_run_id={run_id}", file=f)
 
+        return datasets_dict, dataloaders
+
 
 if __name__ == "__main__":
-    preprocess_data()
+    # ตัวอย่างเรียกใช้พร้อมกำหนด resize
+    preprocess_images(resize=(64, 64))

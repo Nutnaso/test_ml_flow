@@ -1,0 +1,20 @@
+artifact_path: efficientnet_model
+flavors:
+  python_function:
+    data: data
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.tensorflow
+    python_version: 3.11.9
+  tensorflow:
+    code: null
+    data: data
+    keras_version: 2.13.1
+    model_type: keras
+    save_format: tf
+mlflow_version: 2.16.0
+model_size_bytes: 55325631
+model_uuid: 762ca14ea0c64899baa5033f53ca71c2
+run_id: 472b801cdf2f48baaa6cea0f1974f3d7
+utc_time_created: '2025-09-30 16:10:56.911538'
