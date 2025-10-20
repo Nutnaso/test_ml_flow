@@ -99,16 +99,23 @@ def _load_artifacts_from_preprocessing_run(run_id: str):
     return label_encoder_obj, transform_config
 
 # --- Helper: log artifact safely ---
-def _safe_log_artifact(local_path: Path, artifact_path: str = "evaluation"):
-    """Log artifact safely inside an active MLflow run and relative path."""
-    if not mlflow.active_run():
-        print(f"⚠️ Skipping log_artifact('{local_path}') — no active MLflow run.")
-        return
+def _safe_log_artifact(file_path: Path, artifact_path: str = "evaluation"):
+    """Safely log artifact, ensuring relative path and permission-safe on Linux/Windows."""
     try:
-        rel_path = str(local_path.relative_to(Path.cwd()))
-    except ValueError:
-        rel_path = str(local_path)
-    mlflow.log_artifact(rel_path, artifact_path=artifact_path)
+        file_path = Path(file_path).resolve()
+        # convert to relative path under current workspace
+        workspace = Path(os.getenv("GITHUB_WORKSPACE", Path.cwd())).resolve()
+        rel_path = os.path.relpath(file_path, workspace)
+
+        if not os.access(file_path, os.R_OK):
+            print(f"⚠️ No read permission for {file_path}, skipping log.")
+            return
+
+        print(f"📦 Logging artifact: {rel_path} → {artifact_path}")
+        mlflow.log_artifact(rel_path, artifact_path=artifact_path)
+    except Exception as e:
+        print(f"⚠️ Failed to log artifact safely ({file_path}): {e}")
+
 
 # --- Plot and log confusion matrix ---
 def _plot_and_log_confusion(cm: np.ndarray, classes: list, artifact_dir="eval_artifacts"):
