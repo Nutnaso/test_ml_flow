@@ -246,7 +246,7 @@ def train_evaluate_register(preprocessing_run_id: str,
             report_txt = classification_report(y_true, y_pred, target_names=list(classes_order))
             with open("eval_artifacts/classification_report.txt", "w", encoding="utf-8") as f:
                 f.write(report_txt)
-            mlflow.log_artifacts("eval_artifacts", artifact_path="evaluation")
+            mlflow.log_artifact("./eval_artifacts/loss_curve.png", artifact_path="evaluation")
 
             # Register model
             mlflow.tensorflow.log_model(model=model,
