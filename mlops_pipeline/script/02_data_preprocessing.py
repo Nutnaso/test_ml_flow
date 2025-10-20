@@ -1,5 +1,5 @@
 # =============================================
-# 02_data_preprocessing.py — Mushroom Images (Final)
+# 02_data_preprocessing.py — Mushroom Images
 # =============================================
 import os
 import json
@@ -9,14 +9,20 @@ import numpy as np
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, WeightedRandomSampler
 import joblib
-import shutil
+from pathlib import Path
 
 
-def safe_path(path: str) -> str:
-    """Return absolute cross-platform safe path."""
+def safe_mlflow_path(path: str) -> str:
+    """Convert path to valid MLflow URI (cross-platform safe)."""
     abs_path = os.path.abspath(path)
+
+    # 🔹 ป้องกัน path ที่ผิดรูปแบบใน Linux เช่น /C:/...
     if abs_path.startswith("/C:"):
         abs_path = abs_path.replace("/C:", "C:")
+
+    # 🔹 ป้องกัน backslash ของ Windows
+    abs_path = abs_path.replace("\\", "/")
+
     return abs_path
 
 
@@ -30,12 +36,13 @@ def preprocess_images(
     """Prepare DataLoaders for train/val/test with augmentation & class balancing."""
 
     # -----------------------------
-    # MLflow Tracking setup
+    # ตั้ง MLflow tracking URI แบบ cross-platform
     # -----------------------------
     workspace_dir = os.getenv("GITHUB_WORKSPACE", os.getcwd())
-    mlruns_dir = os.path.join(workspace_dir, "mlruns")
-    os.makedirs(mlruns_dir, exist_ok=True)
-    mlflow.set_tracking_uri(f"file://{safe_path(mlruns_dir)}")
+    mlruns_dir = Path(workspace_dir) / "mlruns"
+    mlruns_dir.mkdir(parents=True, exist_ok=True)
+
+    mlflow.set_tracking_uri(f"file://{safe_mlflow_path(mlruns_dir)}")
     mlflow.set_experiment(experiment_name)
 
     with mlflow.start_run() as run:
@@ -80,6 +87,9 @@ def preprocess_images(
                 transform=train_transform if split == "train" else eval_transform,
             )
 
+            # =====================
+            # WeightedRandomSampler
+            # =====================
             if split == "train":
                 targets = [s[1] for s in ds.samples]
                 class_sample_counts = np.bincount(targets)
@@ -103,17 +113,20 @@ def preprocess_images(
             mlflow.log_metric(f"{split}_num_images", len(ds))
 
         # -----------------------------
-        # Save artifacts
+        # Save class mapping
         # -----------------------------
-        class_to_idx = (datasets_dict.get("train") or
-                        next(iter(datasets_dict.values()))).class_to_idx
+        if "train" in datasets_dict:
+            class_to_idx = datasets_dict["train"].class_to_idx
+        else:
+            class_to_idx = next(iter(datasets_dict.values())).class_to_idx
 
-        preproc_dir = os.path.join(workspace_dir, "preprocessing_artifacts")
-        transformers_dir = os.path.join(workspace_dir, "transformers")
-        os.makedirs(preproc_dir, exist_ok=True)
-        os.makedirs(transformers_dir, exist_ok=True)
+        # -----------------------------
+        # Save preprocessing artifacts
+        # -----------------------------
+        preproc_dir = Path(workspace_dir) / "preprocessing_artifacts"
+        preproc_dir.mkdir(parents=True, exist_ok=True)
 
-        with open(os.path.join(preproc_dir, "class_to_idx.json"), "w", encoding="utf-8") as f:
+        with open(preproc_dir / "class_to_idx.json", "w", encoding="utf-8") as f:
             json.dump(class_to_idx, f, indent=2)
 
         transform_config = {
@@ -122,35 +135,36 @@ def preprocess_images(
             "normalize_std": [0.229, 0.224, 0.225],
             "augmentation": True,
         }
-        with open(os.path.join(preproc_dir, "transforms.json"), "w", encoding="utf-8") as f:
+        with open(preproc_dir / "transforms.json", "w", encoding="utf-8") as f:
             json.dump(transform_config, f, indent=2)
 
+        # -----------------------------
+        # Save label encoder
+        # -----------------------------
+        transformers_dir = Path(workspace_dir) / "transformers"
+        transformers_dir.mkdir(parents=True, exist_ok=True)
+
         label_encoder_obj = {"classes_": list(class_to_idx.keys())}
-        joblib.dump(label_encoder_obj, os.path.join(transformers_dir, "label_encoder.pkl"))
+        joblib.dump(label_encoder_obj, transformers_dir / "label_encoder.pkl")
 
         # -----------------------------
-        # Copy artifacts inside mlruns directory for safe logging
+        # Log artifacts safely
         # -----------------------------
-        run_artifact_base = os.path.join(mlruns_dir, run.info.experiment_id, run_id, "artifacts")
-        os.makedirs(run_artifact_base, exist_ok=True)
+        try:
+            mlflow.log_artifacts(str(transformers_dir.resolve()), artifact_path="transformers")
+            mlflow.log_artifacts(str(preproc_dir.resolve()), artifact_path="preprocessing")
+        except PermissionError as e:
+            print(f"⚠️ Warning: Skipped artifact logging due to permission issues: {e}")
+        except Exception as e:
+            print(f"⚠️ Warning: Artifact logging failed: {e}")
 
-        local_preproc = os.path.join(run_artifact_base, "preprocessing")
-        local_trans = os.path.join(run_artifact_base, "transformers")
-        shutil.copytree(preproc_dir, local_preproc, dirs_exist_ok=True)
-        shutil.copytree(transformers_dir, local_trans, dirs_exist_ok=True)
-
-        mlflow.log_artifacts(local_trans, artifact_path="transformers")
-        mlflow.log_artifacts(local_preproc, artifact_path="preprocessing")
-
-        # -----------------------------
-        # Log metadata
-        # -----------------------------
         mlflow.log_param("num_classes", len(class_to_idx))
         mlflow.log_param("classes", list(class_to_idx.keys()))
 
         print("✅ Preprocessing completed. Run ID:", run_id)
         print("Classes mapping:", class_to_idx)
 
+        # For GitHub Actions Output
         if os.getenv("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a") as f:
                 print(f"preprocessing_run_id={run_id}", file=f)
