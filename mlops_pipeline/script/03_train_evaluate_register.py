@@ -61,7 +61,10 @@ def train_evaluate_register(preprocessing_run_id: str,
     # GPU detection
     gpus = tf.config.list_physical_devices('GPU')
     device = "/GPU:0" if gpus else "/CPU:0"
+    
     print(f"✅ Using device: {device}")
+    # ✅ ตั้งค่า Tracking URI ให้ปลอดภัยทุกระบบ (ป้องกัน /C: permission denied)
+    mlflow.set_tracking_uri("file:./mlruns")
 
     mlflow.set_experiment(DEF_EXPERIMENT)
 
