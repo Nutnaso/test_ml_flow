@@ -100,21 +100,46 @@ def _load_artifacts_from_preprocessing_run(run_id: str):
 
 # --- Helper: log artifact safely ---
 def _safe_log_artifact(file_path: Path, artifact_path: str = "evaluation"):
-    """Safely log artifact, ensuring relative path and permission-safe on Linux/Windows."""
+    """Safely log artifact across OS (Windows, Linux, macOS, GitHub Actions)."""
     try:
-        file_path = Path(file_path).resolve()
-        # convert to relative path under current workspace
-        workspace = Path(os.getenv("GITHUB_WORKSPACE", Path.cwd())).resolve()
-        rel_path = os.path.relpath(file_path, workspace)
+        file_path = Path(file_path)
 
+        # Ensure absolute path & readable
+        if not file_path.exists():
+            print(f"⚠️ File not found, skipping: {file_path}")
+            return
         if not os.access(file_path, os.R_OK):
             print(f"⚠️ No read permission for {file_path}, skipping log.")
             return
 
+        # Resolve workspace
+        workspace = Path(os.getenv("GITHUB_WORKSPACE", Path.cwd())).resolve()
+
+        # Normalize path (fix 'C:\' or '/C:' issues)
+        file_str = str(file_path).replace("\\", "/")
+        if ":" in file_str and not platform.system().lower().startswith("win"):
+            # Remove Windows-style drive letter on Linux/macOS
+            file_str = file_str.split(":", 1)[-1]
+            file_str = file_str.lstrip("/")
+
+        safe_path = workspace / Path(file_str)
+        safe_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Copy file into safe workspace location if outside
+        if not str(file_path).startswith(str(workspace)):
+            temp_path = workspace / "eval_artifacts" / file_path.name
+            temp_path.parent.mkdir(parents=True, exist_ok=True)
+            import shutil
+            shutil.copy2(file_path, temp_path)
+            safe_path = temp_path
+
+        rel_path = os.path.relpath(safe_path, workspace)
         print(f"📦 Logging artifact: {rel_path} → {artifact_path}")
-        mlflow.log_artifact(rel_path, artifact_path=artifact_path)
+        mlflow.log_artifact(str(safe_path), artifact_path=artifact_path)
+
     except Exception as e:
         print(f"⚠️ Failed to log artifact safely ({file_path}): {e}")
+
 
 
 # --- Plot and log confusion matrix ---
