@@ -1,5 +1,5 @@
 # =============================================
-# 03_train_evaluate_register.py — Mushroom EfficientNet Training
+# 03_train_evaluate_register.py — Mushroom EfficientNet Training (Fixed)
 # =============================================
 import os
 import sys
@@ -17,18 +17,50 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 import tensorflow as tf
+from mlflow.exceptions import MlflowException
 
 DEF_EXPERIMENT = "Mushroom - EfficientNet Training"
 
 
+def _safe_download_artifact(run_id: str, artifact_path: str):
+    """ดาวน์โหลด artifact อย่างปลอดภัย หากไม่พบให้ return None"""
+    try:
+        path = download_artifacts(run_id=run_id, artifact_path=artifact_path)
+        print(f"✅ Downloaded artifact '{artifact_path}' to {path}")
+        return path
+    except MlflowException as e:
+        print(f"⚠️ Warning: Artifact '{artifact_path}' not found in run {run_id}")
+        print("⚠️ Exception:", e)
+        return None
+
+
 def _load_artifacts_from_preprocessing_run(run_id: str):
     """โหลด label encoder และ transform config จาก preprocessing run"""
-    local_trans = download_artifacts(run_id=run_id, artifact_path="transformers")
-    label_encoder_obj = joblib.load(os.path.join(local_trans, "label_encoder.pkl"))
+    local_trans = _safe_download_artifact(run_id, "transformers")
+    local_preproc = _safe_download_artifact(run_id, "preprocessing")
 
-    local_preproc = download_artifacts(run_id=run_id, artifact_path="preprocessing")
-    with open(os.path.join(local_preproc, "transforms.json"), "r", encoding="utf-8") as f:
-        transform_config = json.load(f)
+    label_encoder_obj = None
+    transform_config = {}
+
+    # โหลด label encoder (หากมี)
+    if local_trans:
+        label_path = os.path.join(local_trans, "label_encoder.pkl")
+        if os.path.exists(label_path):
+            label_encoder_obj = joblib.load(label_path)
+        else:
+            print(f"⚠️ label_encoder.pkl not found at {label_path}")
+
+    # โหลด transform config (หากมี)
+    if local_preproc:
+        json_path = os.path.join(local_preproc, "transforms.json")
+        if os.path.exists(json_path):
+            with open(json_path, "r", encoding="utf-8") as f:
+                transform_config = json.load(f)
+        else:
+            print(f"⚠️ transforms.json not found at {json_path}")
+
+    if label_encoder_obj is None:
+        raise FileNotFoundError("❌ label_encoder.pkl not found in preprocessing artifacts")
 
     return label_encoder_obj, transform_config
 
@@ -61,15 +93,19 @@ def train_evaluate_register(preprocessing_run_id: str,
     # GPU detection
     gpus = tf.config.list_physical_devices('GPU')
     device = "/GPU:0" if gpus else "/CPU:0"
-
     print(f"✅ Using device: {device}")
-    # ✅ ตั้งค่า Tracking URI ให้ปลอดภัยทุกระบบ (ป้องกัน /C: permission denied)
-    mlflow.set_tracking_uri("file:./mlruns")
+
+    # ✅ ตั้งค่า Tracking URI ให้ปลอดภัย (ใช้ relative path เสมอ)
+    tracking_dir = os.path.abspath("./mlruns")
+    mlflow.set_tracking_uri(f"file://{tracking_dir}")
     mlflow.set_experiment(DEF_EXPERIMENT)
 
-    # Load preprocessing artifacts
+    # โหลด preprocessing artifacts
     label_encoder_obj, transform_config = _load_artifacts_from_preprocessing_run(preprocessing_run_id)
     classes_order = label_encoder_obj.get("classes_", [])
+    if not classes_order:
+        raise ValueError("❌ classes_ is empty in label_encoder.pkl — preprocessing may have failed")
+
     img_size = tuple(transform_config.get("resize", (256, 256)))
 
     with tf.device(device):
@@ -81,7 +117,7 @@ def train_evaluate_register(preprocessing_run_id: str,
             mlflow.log_param("epochs", epochs)
             mlflow.log_param("num_classes", len(classes_order))
 
-            # Data pipeline
+            # ✅ Data pipeline
             datagen = ImageDataGenerator(rescale=1./255)
 
             train_gen = datagen.flow_from_directory(
@@ -104,7 +140,7 @@ def train_evaluate_register(preprocessing_run_id: str,
                 shuffle=False
             )
 
-            # Model
+            # ✅ Model
             base_model = EfficientNetB0(weights="imagenet", include_top=False, input_shape=(*img_size, 3))
             x = GlobalAveragePooling2D()(base_model.output)
             x = Dropout(0.3)(x)
@@ -115,14 +151,14 @@ def train_evaluate_register(preprocessing_run_id: str,
                           loss="categorical_crossentropy",
                           metrics=["accuracy"])
 
-            # Train
+            # ✅ Train
             history = model.fit(
                 train_gen,
                 validation_data=val_gen,
                 epochs=epochs
             )
 
-            # ✅ Log training metrics to MLflow
+            # ✅ Log metrics
             for epoch in range(epochs):
                 mlflow.log_metric("train_loss", float(history.history["loss"][epoch]), step=epoch)
                 mlflow.log_metric("val_loss", float(history.history["val_loss"][epoch]), step=epoch)
@@ -131,7 +167,7 @@ def train_evaluate_register(preprocessing_run_id: str,
                 if "val_accuracy" in history.history:
                     mlflow.log_metric("val_accuracy", float(history.history["val_accuracy"][epoch]), step=epoch)
 
-            # ✅ Plot and log training curves
+            # ✅ Save training curves
             os.makedirs("eval_artifacts", exist_ok=True)
             plt.figure(figsize=(8, 5))
             plt.plot(history.history["loss"], label="Train Loss")
@@ -145,33 +181,31 @@ def train_evaluate_register(preprocessing_run_id: str,
             plt.close()
             mlflow.log_artifact("eval_artifacts/loss_curve.png", artifact_path="evaluation")
 
-
-            # Evaluate
+            # ✅ Evaluate
             loss, acc = model.evaluate(test_gen)
             mlflow.log_metric("test_loss", float(loss))
             mlflow.log_metric("test_accuracy", float(acc))
 
-            # Confusion matrix
+            # ✅ Confusion matrix
             y_true = test_gen.classes
             y_pred = np.argmax(model.predict(test_gen), axis=1)
             cm = confusion_matrix(y_true, y_pred)
             _plot_and_log_confusion(cm, classes=list(classes_order))
 
-            # Classification report
+            # ✅ Classification report
             report_txt = classification_report(y_true, y_pred, target_names=list(classes_order))
-            os.makedirs("eval_artifacts", exist_ok=True)
             with open("eval_artifacts/classification_report.txt", "w", encoding="utf-8") as f:
                 f.write(report_txt)
             mlflow.log_artifacts("eval_artifacts", artifact_path="evaluation")
 
-            # Log model
+            # ✅ Register model
             mlflow.tensorflow.log_model(
                 model=model,
                 artifact_path="efficientnet_model",
                 registered_model_name=model_registry_name
             )
 
-            print("Training complete. Test accuracy:", acc)
+            print(f"🎉 Training complete. Test accuracy: {acc:.4f}")
 
 
 if __name__ == "__main__":
