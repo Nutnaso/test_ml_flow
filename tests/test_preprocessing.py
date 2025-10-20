@@ -77,3 +77,4 @@ if __name__ == "__main__":
 
     with TemporaryDirectory() as tmp:
         test_preprocess_image(tmp_path=Path(tmp))
+
