@@ -28,10 +28,10 @@ def detect_image_channels(dataset_dir: str):
     train_dir = Path(dataset_dir) / "train"
     if not train_dir.exists():
         raise FileNotFoundError(f"Train folder not found: {train_dir}")
-    
+
     first_class = next(train_dir.iterdir())
     first_image_path = next(first_class.iterdir())
-    
+
     img = Image.open(first_image_path)
     mode = img.mode
     if mode == "L":  # grayscale
@@ -46,7 +46,7 @@ def detect_image_channels(dataset_dir: str):
         channels = 3
         weights = "imagenet"
         color_mode = "rgb"
-    
+
     print(f"✅ Detected image mode: {mode}, using channels={channels}, weights={weights}")
     return channels, weights, color_mode
 
@@ -98,6 +98,18 @@ def _load_artifacts_from_preprocessing_run(run_id: str):
 
     return label_encoder_obj, transform_config
 
+# --- Helper: log artifact safely ---
+def _safe_log_artifact(local_path: Path, artifact_path: str = "evaluation"):
+    """Log artifact safely inside an active MLflow run and relative path."""
+    if not mlflow.active_run():
+        print(f"⚠️ Skipping log_artifact('{local_path}') — no active MLflow run.")
+        return
+    try:
+        rel_path = str(local_path.relative_to(Path.cwd()))
+    except ValueError:
+        rel_path = str(local_path)
+    mlflow.log_artifact(rel_path, artifact_path=artifact_path)
+
 # --- Plot and log confusion matrix ---
 def _plot_and_log_confusion(cm: np.ndarray, classes: list, artifact_dir="eval_artifacts"):
     artifact_dir = Path(artifact_dir)
@@ -113,10 +125,11 @@ def _plot_and_log_confusion(cm: np.ndarray, classes: list, artifact_dir="eval_ar
     plt.xlabel('Predicted Label')
     plt.ylabel('True Label')
     plt.tight_layout()
+
     path = artifact_dir / "confusion_matrix.png"
     fig.savefig(path, bbox_inches='tight')
     plt.close(fig)
-    mlflow.log_artifacts(str(artifact_dir), artifact_path="evaluation")
+    _safe_log_artifact(path)
 
 # --- Main training function ---
 def train_evaluate_register(preprocessing_run_id: str,
@@ -192,7 +205,7 @@ def train_evaluate_register(preprocessing_run_id: str,
             )
 
             # Model
-            base_model = EfficientNetB0(weights=None,
+            base_model = EfficientNetB0(weights=weights,
                                         include_top=False,
                                         input_shape=(*img_size, channels))
             x = GlobalAveragePooling2D()(base_model.output)
@@ -228,7 +241,7 @@ def train_evaluate_register(preprocessing_run_id: str,
             loss_curve_path = eval_dir / "loss_curve.png"
             plt.savefig(loss_curve_path)
             plt.close()
-            mlflow.log_artifact(str(loss_curve_path), artifact_path="evaluation")
+            _safe_log_artifact(loss_curve_path)
 
             # Evaluate
             loss, acc = model.evaluate(test_gen)
@@ -246,7 +259,7 @@ def train_evaluate_register(preprocessing_run_id: str,
             report_path = eval_dir / "classification_report.txt"
             with open(report_path, "w", encoding="utf-8") as f:
                 f.write(report_txt)
-            mlflow.log_artifact(str(report_path), artifact_path="evaluation")
+            _safe_log_artifact(report_path)
 
             # Register model
             mlflow.tensorflow.log_model(model=model,
