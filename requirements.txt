@@ -9,9 +9,7 @@ openpyxl>=3.1.0
 torch>=2.0.0
 torchvision
 torchaudio
-pathlib
-PIL
-
+pillow>=10.0.0
 
 # Deep Learning (EfficientNet)
 tensorflow>=2.15.0
@@ -19,13 +17,9 @@ keras>=2.15.0
 
 # API & Serving
 flask>=3.0.0
-gunicorn>=21.2.0  # production WSGI server
-
-# Image Processing
-pillow>=10.0.0
+gunicorn>=21.2.0
 
 # Dev & Testing
 pytest>=8.0.0
 ruff>=0.5.0
 black>=24.0.0
-tensorflow[and-cuda]
