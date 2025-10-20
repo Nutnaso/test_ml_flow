@@ -42,7 +42,7 @@ jobs:
       - name: Black (verify)
         run: black --check .
 
-    test:
+  test:
     runs-on: ubuntu-latest
     env:
       MLFLOW_TRACKING_URI: file://${{ github.workspace }}/mlruns
@@ -77,8 +77,7 @@ jobs:
 
       - name: Run custom preprocessing test
         shell: bash
-        run: |
-          python tests/test_preprocessing.py
+        run: python tests/test_preprocessing.py
 
       - name: Upload MLflow artifacts for inspection
         if: success()
@@ -87,7 +86,6 @@ jobs:
           name: mlflow-artifacts
           path: mlruns/
           if-no-files-found: ignore
-
 
   train:
     runs-on: ubuntu-latest
@@ -107,7 +105,11 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install mlflow pandas numpy scikit-learn joblib matplotlib openpyxl torch torchvision; fi
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install mlflow pandas numpy scikit-learn joblib matplotlib openpyxl torch torchvision
+          fi
 
       - name: Validate
         run: python mlops_pipeline/script/01_data_validation.py
