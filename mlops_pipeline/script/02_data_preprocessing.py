@@ -10,6 +10,16 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, WeightedRandomSampler
 import joblib
 
+
+def safe_mlfow_path(path: str) -> str:
+    """Convert path to valid MLflow URI (cross-platform safe)."""
+    abs_path = os.path.abspath(path)
+    # ป้องกัน path ที่ขึ้นต้นด้วย /C: ใน Linux
+    if abs_path.startswith("/C:"):
+        abs_path = abs_path.replace("/C:", "C:")
+    return abs_path
+
+
 def preprocess_images(
     data_path: str = "dataset",
     batch_size: int = 32,
@@ -25,7 +35,7 @@ def preprocess_images(
     workspace_dir = os.getenv("GITHUB_WORKSPACE", os.getcwd())
     mlruns_dir = os.path.join(workspace_dir, "mlruns")
     os.makedirs(mlruns_dir, exist_ok=True)
-    mlflow.set_tracking_uri(f"file:{mlruns_dir}")
+    mlflow.set_tracking_uri(f"file://{safe_mlfow_path(mlruns_dir)}")
     mlflow.set_experiment(experiment_name)
 
     with mlflow.start_run() as run:
@@ -37,7 +47,7 @@ def preprocess_images(
         mlflow.log_param("resize", resize)
 
         # -----------------------------
-        # Augmentation transforms for train
+        # Define transforms
         # -----------------------------
         train_transform = transforms.Compose([
             transforms.Resize(resize),
@@ -47,17 +57,14 @@ def preprocess_images(
                                    saturation=0.2, hue=0.1),
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406],
-                                 [0.229, 0.224, 0.225])
+                                 [0.229, 0.224, 0.225]),
         ])
 
-        # -----------------------------
-        # Validation/test transforms (no augmentation)
-        # -----------------------------
         eval_transform = transforms.Compose([
             transforms.Resize(resize),
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406],
-                                 [0.229, 0.224, 0.225])
+                                 [0.229, 0.224, 0.225]),
         ])
 
         datasets_dict = {}
@@ -70,7 +77,7 @@ def preprocess_images(
 
             ds = datasets.ImageFolder(
                 split_path,
-                transform=train_transform if split == "train" else eval_transform
+                transform=train_transform if split == "train" else eval_transform,
             )
 
             # =====================
@@ -79,13 +86,13 @@ def preprocess_images(
             if split == "train":
                 targets = [s[1] for s in ds.samples]
                 class_sample_counts = np.bincount(targets)
-                class_weights = 1.0 / class_sample_counts
+                class_weights = 1.0 / np.maximum(class_sample_counts, 1)
                 sample_weights = [class_weights[t] for t in targets]
 
                 sampler = WeightedRandomSampler(
                     weights=sample_weights,
                     num_samples=len(sample_weights),
-                    replacement=True
+                    replacement=True,
                 )
                 dl = DataLoader(ds, batch_size=batch_size, sampler=sampler,
                                 num_workers=num_workers)
@@ -118,7 +125,7 @@ def preprocess_images(
             "resize": resize,
             "normalize_mean": [0.485, 0.456, 0.406],
             "normalize_std": [0.229, 0.224, 0.225],
-            "augmentation": True
+            "augmentation": True,
         }
         with open(os.path.join(preproc_dir, "transforms.json"), "w", encoding="utf-8") as f:
             json.dump(transform_config, f, indent=2)
@@ -132,16 +139,20 @@ def preprocess_images(
         joblib.dump(label_encoder_obj, os.path.join(transformers_dir, "label_encoder.pkl"))
 
         # -----------------------------
-        # Log artifacts to MLflow (ใช้ absolute path)
+        # Log artifacts safely
         # -----------------------------
-        mlflow.log_artifacts(transformers_dir, artifact_path="transformers")
-        mlflow.log_artifacts(preproc_dir, artifact_path="preprocessing")
+        try:
+            mlflow.log_artifacts(safe_mlfow_path(transformers_dir), artifact_path="transformers")
+            mlflow.log_artifacts(safe_mlfow_path(preproc_dir), artifact_path="preprocessing")
+        except PermissionError:
+            print("⚠️ Warning: Skipped artifact logging due to permission issues.")
 
         mlflow.log_param("num_classes", len(class_to_idx))
         mlflow.log_param("classes", list(class_to_idx.keys()))
 
         print("✅ Preprocessing completed. Run ID:", run_id)
         print("Classes mapping:", class_to_idx)
+
         if os.getenv("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a") as f:
                 print(f"preprocessing_run_id={run_id}", file=f)
@@ -150,5 +161,4 @@ def preprocess_images(
 
 
 if __name__ == "__main__":
-    # ตัวอย่างเรียกใช้พร้อมกำหนด resize
     preprocess_images(resize=(64, 64))
