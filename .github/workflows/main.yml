@@ -68,7 +68,12 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install mlflow pandas numpy scikit-learn joblib matplotlib openpyxl pytest torch torchvision; fi
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install mlflow pandas numpy scikit-learn joblib matplotlib openpyxl pytest
+            pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+          fi
 
       - name: Run pytest
         run: pytest -q

@@ -120,6 +120,30 @@ def train_evaluate_register(preprocessing_run_id: str,
                 epochs=epochs
             )
 
+            # ✅ Log training metrics to MLflow
+            for epoch in range(epochs):
+                mlflow.log_metric("train_loss", float(history.history["loss"][epoch]), step=epoch)
+                mlflow.log_metric("val_loss", float(history.history["val_loss"][epoch]), step=epoch)
+                if "accuracy" in history.history:
+                    mlflow.log_metric("train_accuracy", float(history.history["accuracy"][epoch]), step=epoch)
+                if "val_accuracy" in history.history:
+                    mlflow.log_metric("val_accuracy", float(history.history["val_accuracy"][epoch]), step=epoch)
+
+            # ✅ Plot and log training curves
+            os.makedirs("eval_artifacts", exist_ok=True)
+            plt.figure(figsize=(8, 5))
+            plt.plot(history.history["loss"], label="Train Loss")
+            plt.plot(history.history["val_loss"], label="Val Loss")
+            plt.title("Training and Validation Loss")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig("eval_artifacts/loss_curve.png")
+            plt.close()
+            mlflow.log_artifact("eval_artifacts/loss_curve.png", artifact_path="evaluation")
+
+
             # Evaluate
             loss, acc = model.evaluate(test_gen)
             mlflow.log_metric("test_loss", float(loss))

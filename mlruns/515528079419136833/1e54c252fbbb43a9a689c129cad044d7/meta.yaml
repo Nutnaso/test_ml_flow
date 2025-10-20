@@ -1,0 +1,15 @@
+artifact_uri: file:///C:/Users/USER/Documents/GitHub/test_ml_flow/mlruns/515528079419136833/1e54c252fbbb43a9a689c129cad044d7/artifacts
+end_time: 1760946906465
+entry_point_name: ''
+experiment_id: '515528079419136833'
+lifecycle_stage: active
+run_id: 1e54c252fbbb43a9a689c129cad044d7
+run_name: sneaky-eel-425
+run_uuid: 1e54c252fbbb43a9a689c129cad044d7
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1760946906343
+status: 3
+tags: []
+user_id: USER
