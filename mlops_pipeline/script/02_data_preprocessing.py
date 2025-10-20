@@ -19,7 +19,9 @@ def preprocess_images(
     experiment_name: str = "Mushroom EfficientNet - Data Preprocessing",
 ):
     """Prepare DataLoaders for train/val/test with augmentation & class balancing."""
-    mlflow.set_tracking_uri("file:./mlruns")
+
+    # ใช้ absolute path สำหรับ mlflow tracking
+    mlflow.set_tracking_uri(f"file:{os.path.abspath('./mlruns')}")
     mlflow.set_experiment(experiment_name)
 
     with mlflow.start_run() as run:
@@ -114,10 +116,14 @@ def preprocess_images(
         os.makedirs("transformers", exist_ok=True)
         label_encoder_obj = {"classes_": list(class_to_idx.keys())}
         joblib.dump(label_encoder_obj, "transformers/label_encoder.pkl")
-        mlflow.log_artifacts("transformers", artifact_path="transformers")
 
-        # Log other artifacts
-        mlflow.log_artifacts("preprocessing_artifacts", artifact_path="preprocessing")
+        # ใช้ absolute path สำหรับ mlflow log artifacts
+        transformers_dir = os.path.abspath("transformers")
+        preproc_dir = os.path.abspath("preprocessing_artifacts")
+
+        mlflow.log_artifacts(transformers_dir, artifact_path="transformers")
+        mlflow.log_artifacts(preproc_dir, artifact_path="preprocessing")
+
         mlflow.log_param("num_classes", len(class_to_idx))
         mlflow.log_param("classes", list(class_to_idx.keys()))
 
