@@ -170,7 +170,11 @@ def train_evaluate_register(preprocessing_run_id: str,
             )
 
             # ✅ Model
-            base_model = EfficientNetB0(weights="imagenet", include_top=False, input_shape=(*img_size, 3))
+            # ก่อนสร้าง base_model
+            channels = 3  # ถ้า dataset เป็น RGB
+            base_model = EfficientNetB0(weights="imagenet" if channels==3 else None,
+                                        include_top=False,
+                                        input_shape=(*img_size, channels))
             x = GlobalAveragePooling2D()(base_model.output)
             x = Dropout(0.3)(x)
             output = Dense(len(classes_order), activation="softmax")(x)
