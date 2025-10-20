@@ -10,6 +10,8 @@ torch>=2.0.0
 torchvision
 torchaudio
 pathlib
+PIL
+
 
 # Deep Learning (EfficientNet)
 tensorflow>=2.15.0
