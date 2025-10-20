@@ -19,20 +19,20 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 import tensorflow as tf
 from mlflow.exceptions import MlflowException
 from PIL import Image
+from pathlib import Path
 
 DEF_EXPERIMENT = "Mushroom - EfficientNet Training"
 
 # --- Auto detect image channels from dataset ---
 def detect_image_channels(dataset_dir: str):
-    train_dir = os.path.join(dataset_dir, "train")
-    if not os.path.exists(train_dir):
+    train_dir = Path(dataset_dir) / "train"
+    if not train_dir.exists():
         raise FileNotFoundError(f"Train folder not found: {train_dir}")
     
-    first_class = next(os.walk(train_dir))[1][0]
-    first_image_path = next(os.walk(os.path.join(train_dir, first_class)))[2][0]
-    img_path = os.path.join(train_dir, first_class, first_image_path)
+    first_class = next(train_dir.iterdir())
+    first_image_path = next(first_class.iterdir())
     
-    img = Image.open(img_path)
+    img = Image.open(first_image_path)
     mode = img.mode
     if mode == "L":  # grayscale
         channels = 1
@@ -55,7 +55,7 @@ def _safe_download_artifact(run_id: str, artifact_path: str):
     try:
         path = download_artifacts(run_id=run_id, artifact_path=artifact_path)
         print(f"✅ Downloaded artifact '{artifact_path}' to {path}")
-        return path
+        return Path(path)
     except MlflowException as e:
         print(f"⚠️ Warning: Artifact '{artifact_path}' not found in run {run_id}")
         print("⚠️ Exception:", e)
@@ -68,7 +68,6 @@ def _load_artifacts_from_preprocessing_run(run_id: str):
 
     # fallback local mlruns
     if not local_transformers or not local_preproc:
-        from pathlib import Path
         workspace = Path(os.getenv("GITHUB_WORKSPACE", os.getcwd())).resolve()
         mlruns_dir = workspace / "mlruns"
         print("🔍 Fallback: Searching in local mlruns directory...")
@@ -82,15 +81,15 @@ def _load_artifacts_from_preprocessing_run(run_id: str):
         else:
             print("❌ No local fallback artifacts found in mlruns.")
 
-    label_encoder_path = os.path.join(local_transformers, "label_encoder.pkl")
-    transform_config_path = os.path.join(local_preproc, "transforms.json")
+    label_encoder_path = local_transformers / "label_encoder.pkl"
+    transform_config_path = local_preproc / "transforms.json"
 
-    if not os.path.exists(label_encoder_path):
+    if not label_encoder_path.exists():
         raise FileNotFoundError("❌ label_encoder.pkl not found in preprocessing artifacts")
 
     label_encoder_obj = joblib.load(label_encoder_path)
 
-    if os.path.exists(transform_config_path):
+    if transform_config_path.exists():
         with open(transform_config_path, "r", encoding="utf-8") as f:
             transform_config = json.load(f)
     else:
@@ -101,7 +100,9 @@ def _load_artifacts_from_preprocessing_run(run_id: str):
 
 # --- Plot and log confusion matrix ---
 def _plot_and_log_confusion(cm: np.ndarray, classes: list, artifact_dir="eval_artifacts"):
-    os.makedirs(artifact_dir, exist_ok=True)
+    artifact_dir = Path(artifact_dir)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+
     fig = plt.figure(figsize=(8, 6))
     plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
     plt.title('Confusion Matrix')
@@ -112,10 +113,10 @@ def _plot_and_log_confusion(cm: np.ndarray, classes: list, artifact_dir="eval_ar
     plt.xlabel('Predicted Label')
     plt.ylabel('True Label')
     plt.tight_layout()
-    path = os.path.join(artifact_dir, "confusion_matrix.png")
+    path = artifact_dir / "confusion_matrix.png"
     fig.savefig(path, bbox_inches='tight')
     plt.close(fig)
-    mlflow.log_artifacts(artifact_dir, artifact_path="evaluation")
+    mlflow.log_artifacts(str(artifact_dir), artifact_path="evaluation")
 
 # --- Main training function ---
 def train_evaluate_register(preprocessing_run_id: str,
@@ -127,7 +128,9 @@ def train_evaluate_register(preprocessing_run_id: str,
     device = "/GPU:0" if gpus else "/CPU:0"
     print(f"✅ Using device: {device}")
 
-    mlflow.set_tracking_uri(f"file://{os.path.abspath('./mlruns')}")
+    mlruns_path = Path.cwd() / "mlruns"
+    mlruns_path.mkdir(parents=True, exist_ok=True)
+    mlflow.set_tracking_uri(f"file://{mlruns_path.resolve()}")
     mlflow.set_experiment(DEF_EXPERIMENT)
 
     label_encoder_obj, transform_config = _load_artifacts_from_preprocessing_run(preprocessing_run_id)
@@ -136,6 +139,9 @@ def train_evaluate_register(preprocessing_run_id: str,
         raise ValueError("❌ classes_ is empty in label_encoder.pkl")
 
     img_size = tuple(transform_config.get("resize", (256, 256)))
+
+    eval_dir = Path("eval_artifacts")
+    eval_dir.mkdir(parents=True, exist_ok=True)
 
     with tf.device(device):
         with mlflow.start_run(run_name=f"efficientnet_from_{preprocessing_run_id}"):
@@ -161,28 +167,25 @@ def train_evaluate_register(preprocessing_run_id: str,
                 zoom_range=0.1,
                 horizontal_flip=True
             )
-
             val_datagen = ImageDataGenerator(rescale=1./255)
             test_datagen = ImageDataGenerator(rescale=1./255)
 
             train_gen = train_datagen.flow_from_directory(
-                os.path.join(dataset_dir, "train"),
+                Path(dataset_dir) / "train",
                 target_size=img_size,
                 batch_size=batch_size,
                 class_mode="categorical",
                 color_mode=color_mode
             )
-
             val_gen = val_datagen.flow_from_directory(
-                os.path.join(dataset_dir, "val"),
+                Path(dataset_dir) / "val",
                 target_size=img_size,
                 batch_size=batch_size,
                 class_mode="categorical",
                 color_mode=color_mode
             )
-
             test_gen = test_datagen.flow_from_directory(
-                os.path.join(dataset_dir, "test"),
+                Path(dataset_dir) / "test",
                 target_size=img_size,
                 batch_size=batch_size,
                 class_mode="categorical",
@@ -191,7 +194,7 @@ def train_evaluate_register(preprocessing_run_id: str,
             )
 
             # Model
-            base_model = EfficientNetB0(weights= None,
+            base_model = EfficientNetB0(weights=None,
                                         include_top=False,
                                         input_shape=(*img_size, channels))
             x = GlobalAveragePooling2D()(base_model.output)
@@ -218,7 +221,6 @@ def train_evaluate_register(preprocessing_run_id: str,
                     mlflow.log_metric("val_accuracy", float(history.history["val_accuracy"][epoch]), step=epoch)
 
             # Save loss curve
-            os.makedirs("eval_artifacts", exist_ok=True)
             plt.figure(figsize=(8, 5))
             plt.plot(history.history["loss"], label="Train Loss")
             plt.plot(history.history["val_loss"], label="Val Loss")
@@ -227,9 +229,10 @@ def train_evaluate_register(preprocessing_run_id: str,
             plt.ylabel("Loss")
             plt.legend()
             plt.tight_layout()
-            plt.savefig("eval_artifacts/loss_curve.png")
+            loss_curve_path = eval_dir / "loss_curve.png"
+            plt.savefig(loss_curve_path)
             plt.close()
-            mlflow.log_artifact("eval_artifacts/loss_curve.png", artifact_path="evaluation")
+            mlflow.log_artifact(str(loss_curve_path.resolve()), artifact_path="evaluation")
 
             # Evaluate
             loss, acc = model.evaluate(test_gen)
@@ -244,9 +247,10 @@ def train_evaluate_register(preprocessing_run_id: str,
 
             # Classification report
             report_txt = classification_report(y_true, y_pred, target_names=list(classes_order))
-            with open("eval_artifacts/classification_report.txt", "w", encoding="utf-8") as f:
+            report_path = eval_dir / "classification_report.txt"
+            with open(report_path, "w", encoding="utf-8") as f:
                 f.write(report_txt)
-            mlflow.log_artifact("./eval_artifacts/loss_curve.png", artifact_path="evaluation")
+            mlflow.log_artifact(str(report_path.resolve()), artifact_path="evaluation")
 
             # Register model
             mlflow.tensorflow.log_model(model=model,
@@ -255,7 +259,7 @@ def train_evaluate_register(preprocessing_run_id: str,
 
             print(f"🎉 Training complete. Test accuracy: {acc:.4f}")
 
-
+# --- Main entry point ---
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python 03_train_evaluate_register.py <preprocessing_run_id> [registry_name]")
