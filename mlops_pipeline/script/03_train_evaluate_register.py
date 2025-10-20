@@ -2,6 +2,7 @@
 # 03_train_evaluate_register.py — Mushroom EfficientNet Training (Auto Channel)
 # =============================================
 import os
+import platform
 import sys
 import json
 import joblib
