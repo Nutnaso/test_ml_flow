@@ -19,6 +19,7 @@ def preprocess_images(
     experiment_name: str = "Mushroom EfficientNet - Data Preprocessing",
 ):
     """Prepare DataLoaders for train/val/test with augmentation & class balancing."""
+    mlflow.set_tracking_uri("file:./mlruns")
     mlflow.set_experiment(experiment_name)
 
     with mlflow.start_run() as run:

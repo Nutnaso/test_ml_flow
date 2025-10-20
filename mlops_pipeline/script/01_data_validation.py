@@ -62,6 +62,7 @@ def validate_image_data(
     experiment_name: str = "Mushroom EfficientNet - Data Validation",
 ):
     """Validate image dataset structure and log to MLflow."""
+    mlflow.set_tracking_uri("file:./mlruns")
     mlflow.set_experiment(experiment_name)
 
     with mlflow.start_run() as run:
