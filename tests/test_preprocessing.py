@@ -38,6 +38,9 @@ def load_module_func(py_path: str, func_name: str):
 
 def run_preprocessing_test(tmp_path: Path):
     """ทดสอบ preprocessing ด้วย image test เดียว"""
+    os.environ["MLFLOW_TRACKING_URI"] = str(tmp_path / "mlruns")
+    os.environ["MLFLOW_ARTIFACTS_DIR"] = str(tmp_path / "preprocessing_artifacts")
+ 
     preproc_path = resolve_preprocess_path()
     preprocess_images = load_module_func(preproc_path, "preprocess_images")
 
@@ -85,4 +88,5 @@ if __name__ == "__main__":
     # ใช้ temporary directory แทน tmp_path ของ pytest
     from tempfile import TemporaryDirectory
     with TemporaryDirectory() as tmp:
-        run_preprocessing_test(tmp_path=Path(tmp))
+       run_preprocessing_test(tmp_path=Path(tmp))
+

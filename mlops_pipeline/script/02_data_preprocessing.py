@@ -14,7 +14,7 @@ def preprocess_images(
     data_path: str = "dataset",
     batch_size: int = 32,
     num_workers: int = 2,
-    resize: tuple[int, int] = (256, 256),   # <-- เพิ่ม parameter resize
+    resize: tuple[int, int] = (256, 256),
     experiment_name: str = "Mushroom EfficientNet - Data Preprocessing",
 ):
     """Prepare DataLoaders for train/val/test with augmentation & class balancing."""
