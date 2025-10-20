@@ -18,10 +18,10 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 import tensorflow as tf
 from mlflow.exceptions import MlflowException
-
-DEF_EXPERIMENT = "Mushroom - EfficientNet Training"
 import os
 from PIL import Image
+
+DEF_EXPERIMENT = "Mushroom - EfficientNet Training"
 
 # --- ตรวจสอบ channels ของ dataset ---
 def detect_image_channels(dataset_dir: str):
