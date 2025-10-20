@@ -139,7 +139,6 @@ def train_evaluate_register(preprocessing_run_id: str,
         raise ValueError("❌ classes_ is empty in label_encoder.pkl")
 
     img_size = tuple(transform_config.get("resize", (256, 256)))
-
     eval_dir = Path("eval_artifacts")
     eval_dir.mkdir(parents=True, exist_ok=True)
 
@@ -154,11 +153,10 @@ def train_evaluate_register(preprocessing_run_id: str,
 
             # Detect channels
             channels, weights, color_mode = detect_image_channels(dataset_dir)
-
             if channels == 1:
                 print("⚠️ Grayscale dataset detected, training from scratch (weights=None)")
 
-            # Data augmentation for train
+            # Data augmentation
             train_datagen = ImageDataGenerator(
                 rescale=1./255,
                 rotation_range=20,
@@ -202,14 +200,12 @@ def train_evaluate_register(preprocessing_run_id: str,
             output = Dense(len(classes_order), activation="softmax")(x)
             model = Model(inputs=base_model.input, outputs=output)
 
-            model.compile(optimizer=Adam(learning_rate=1e-4),
+            model.compile(optimizer=Adam(1e-4),
                           loss="categorical_crossentropy",
                           metrics=["accuracy"])
 
             # Train
-            history = model.fit(train_gen,
-                                validation_data=val_gen,
-                                epochs=epochs)
+            history = model.fit(train_gen, validation_data=val_gen, epochs=epochs)
 
             # Log metrics
             for epoch in range(epochs):
@@ -232,7 +228,7 @@ def train_evaluate_register(preprocessing_run_id: str,
             loss_curve_path = eval_dir / "loss_curve.png"
             plt.savefig(loss_curve_path)
             plt.close()
-            mlflow.log_artifact(str(loss_curve_path.resolve()), artifact_path="evaluation")
+            mlflow.log_artifact(str(loss_curve_path), artifact_path="evaluation")
 
             # Evaluate
             loss, acc = model.evaluate(test_gen)
@@ -250,7 +246,7 @@ def train_evaluate_register(preprocessing_run_id: str,
             report_path = eval_dir / "classification_report.txt"
             with open(report_path, "w", encoding="utf-8") as f:
                 f.write(report_txt)
-            mlflow.log_artifact(str(report_path.resolve()), artifact_path="evaluation")
+            mlflow.log_artifact(str(report_path), artifact_path="evaluation")
 
             # Register model
             mlflow.tensorflow.log_model(model=model,
