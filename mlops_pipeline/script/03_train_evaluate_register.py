@@ -35,34 +35,63 @@ def _safe_download_artifact(run_id: str, artifact_path: str):
 
 
 def _load_artifacts_from_preprocessing_run(run_id: str):
-    """โหลด label encoder และ transform config จาก preprocessing run"""
-    local_trans = _safe_download_artifact(run_id, "transformers")
+    """โหลด label_encoder.pkl และ transforms.json จาก MLflow หรือ fallback ไปยัง local mlruns."""
+    import mlflow
+    import joblib
+    import os
+    import json
+    from pathlib import Path
+    from mlflow.exceptions import MlflowException
+
+    def _safe_download_artifact(run_id, artifact_path):
+        """พยายามดาวน์โหลด artifact จาก MLflow"""
+        try:
+            path = mlflow.artifacts.download_artifacts(run_id=run_id, artifact_path=artifact_path)
+            print(f"✅ Downloaded artifact '{artifact_path}' to {path}")
+            return path
+        except MlflowException as e:
+            print(f"⚠️ Warning: Artifact '{artifact_path}' not found in run {run_id}")
+            print("⚠️ Exception:", e)
+            return None
+
+    # --- Step 1: พยายามโหลดจาก MLflow server ---
+    local_transformers = _safe_download_artifact(run_id, "transformers")
     local_preproc = _safe_download_artifact(run_id, "preprocessing")
 
-    label_encoder_obj = None
-    transform_config = {}
+    # --- Step 2: ถ้าโหลดไม่สำเร็จ → fallback หาในโฟลเดอร์ mlruns ---
+    if not local_transformers or not local_preproc:
+        workspace = Path(os.getenv("GITHUB_WORKSPACE", os.getcwd())).resolve()
+        mlruns_dir = workspace / "mlruns"
 
-    # โหลด label encoder (หากมี)
-    if local_trans:
-        label_path = os.path.join(local_trans, "label_encoder.pkl")
-        if os.path.exists(label_path):
-            label_encoder_obj = joblib.load(label_path)
+        print("🔍 Fallback: Searching in local mlruns directory...")
+        for exp_dir in mlruns_dir.glob("*"):
+            candidate = exp_dir / run_id / "artifacts"
+            if candidate.exists():
+                local_transformers = candidate / "transformers"
+                local_preproc = candidate / "preprocessing"
+                print(f"✅ Fallback: Using local artifacts at {candidate}")
+                break
         else:
-            print(f"⚠️ label_encoder.pkl not found at {label_path}")
+            print("❌ No local fallback artifacts found in mlruns.")
 
-    # โหลด transform config (หากมี)
-    if local_preproc:
-        json_path = os.path.join(local_preproc, "transforms.json")
-        if os.path.exists(json_path):
-            with open(json_path, "r", encoding="utf-8") as f:
-                transform_config = json.load(f)
-        else:
-            print(f"⚠️ transforms.json not found at {json_path}")
+    # --- Step 3: ตรวจสอบและโหลดไฟล์ ---
+    label_encoder_path = Path(local_transformers) / "label_encoder.pkl"
+    transform_config_path = Path(local_preproc) / "transforms.json"
 
-    if label_encoder_obj is None:
+    if not label_encoder_path.exists():
         raise FileNotFoundError("❌ label_encoder.pkl not found in preprocessing artifacts")
 
+    label_encoder_obj = joblib.load(label_encoder_path)
+
+    if transform_config_path.exists():
+        with open(transform_config_path, "r", encoding="utf-8") as f:
+            transform_config = json.load(f)
+    else:
+        print(f"⚠️ transforms.json not found at {transform_config_path}")
+        transform_config = {}
+
     return label_encoder_obj, transform_config
+
 
 
 def _plot_and_log_confusion(cm: np.ndarray, classes: list, artifact_dir="eval_artifacts"):
