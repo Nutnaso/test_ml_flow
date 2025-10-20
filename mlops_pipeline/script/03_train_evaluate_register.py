@@ -149,27 +149,49 @@ def train_evaluate_register(preprocessing_run_id: str,
             # Detect channels
             channels, weights, color_mode = detect_image_channels(dataset_dir)
 
-            # Data pipeline
-            datagen = ImageDataGenerator(rescale=1./255)
-            train_gen = datagen.flow_from_directory(os.path.join(dataset_dir, "train"),
-                                                    target_size=img_size,
-                                                    batch_size=batch_size,
-                                                    class_mode="categorical",
-                                                    color_mode=color_mode)
-            val_gen = datagen.flow_from_directory(os.path.join(dataset_dir, "val"),
-                                                  target_size=img_size,
-                                                  batch_size=batch_size,
-                                                  class_mode="categorical",
-                                                  color_mode=color_mode)
-            test_gen = datagen.flow_from_directory(os.path.join(dataset_dir, "test"),
-                                                   target_size=img_size,
-                                                   batch_size=batch_size,
-                                                   class_mode="categorical",
-                                                   shuffle=False,
-                                                   color_mode=color_mode)
+            if channels == 1:
+                print("⚠️ Grayscale dataset detected, training from scratch (weights=None)")
+
+            # Data augmentation for train
+            train_datagen = ImageDataGenerator(
+                rescale=1./255,
+                rotation_range=20,
+                width_shift_range=0.1,
+                height_shift_range=0.1,
+                zoom_range=0.1,
+                horizontal_flip=True
+            )
+
+            val_datagen = ImageDataGenerator(rescale=1./255)
+            test_datagen = ImageDataGenerator(rescale=1./255)
+
+            train_gen = train_datagen.flow_from_directory(
+                os.path.join(dataset_dir, "train"),
+                target_size=img_size,
+                batch_size=batch_size,
+                class_mode="categorical",
+                color_mode=color_mode
+            )
+
+            val_gen = val_datagen.flow_from_directory(
+                os.path.join(dataset_dir, "val"),
+                target_size=img_size,
+                batch_size=batch_size,
+                class_mode="categorical",
+                color_mode=color_mode
+            )
+
+            test_gen = test_datagen.flow_from_directory(
+                os.path.join(dataset_dir, "test"),
+                target_size=img_size,
+                batch_size=batch_size,
+                class_mode="categorical",
+                shuffle=False,
+                color_mode=color_mode
+            )
 
             # Model
-            base_model = EfficientNetB0(weights=weights,
+            base_model = EfficientNetB0(weights= None,
                                         include_top=False,
                                         input_shape=(*img_size, channels))
             x = GlobalAveragePooling2D()(base_model.output)
