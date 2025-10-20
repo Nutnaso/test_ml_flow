@@ -205,7 +205,7 @@ def train_evaluate_register(preprocessing_run_id: str,
             )
 
             # Model
-            base_model = EfficientNetB0(weights=weights,
+            base_model = EfficientNetB0(weights=None,
                                         include_top=False,
                                         input_shape=(*img_size, channels))
             x = GlobalAveragePooling2D()(base_model.output)
