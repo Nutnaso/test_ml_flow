@@ -20,7 +20,37 @@ import tensorflow as tf
 from mlflow.exceptions import MlflowException
 
 DEF_EXPERIMENT = "Mushroom - EfficientNet Training"
+import os
+from PIL import Image
 
+# --- ตรวจสอบ channels ของ dataset ---
+def detect_image_channels(dataset_dir: str):
+    train_dir = os.path.join(dataset_dir, "train")
+    if not os.path.exists(train_dir):
+        raise FileNotFoundError(f"Train folder not found: {train_dir}")
+    
+    # เลือก subfolder แรกและ image แรก
+    first_class = next(os.walk(train_dir))[1][0]
+    first_image_path = next(os.walk(os.path.join(train_dir, first_class)))[2][0]
+    img_path = os.path.join(train_dir, first_class, first_image_path)
+    
+    img = Image.open(img_path)
+    mode = img.mode
+    if mode == "L":  # Grayscale
+        channels = 1
+        weights = None
+        color_mode = "grayscale"
+    elif mode in ["RGB", "RGBA"]:
+        channels = 3
+        weights = "imagenet"
+        color_mode = "rgb"
+    else:
+        channels = 3
+        weights = "imagenet"
+        color_mode = "rgb"
+    
+    print(f"✅ Detected image mode: {mode}, using channels={channels}, weights={weights}")
+    return channels, weights, color_mode
 
 def _safe_download_artifact(run_id: str, artifact_path: str):
     """ดาวน์โหลด artifact อย่างปลอดภัย หากไม่พบให้ return None"""
@@ -146,35 +176,42 @@ def train_evaluate_register(preprocessing_run_id: str,
             mlflow.log_param("epochs", epochs)
             mlflow.log_param("num_classes", len(classes_order))
 
-            # ✅ Data pipeline
+            # ตรวจสอบ channels อัตโนมัติ
+            channels, weights, color_mode = detect_image_channels(dataset_dir)
+
+            # Data pipeline
             datagen = ImageDataGenerator(rescale=1./255)
 
             train_gen = datagen.flow_from_directory(
                 os.path.join(dataset_dir, "train"),
                 target_size=img_size,
                 batch_size=batch_size,
-                class_mode="categorical"
+                class_mode="categorical",
+                color_mode=color_mode
             )
             val_gen = datagen.flow_from_directory(
                 os.path.join(dataset_dir, "val"),
                 target_size=img_size,
                 batch_size=batch_size,
-                class_mode="categorical"
+                class_mode="categorical",
+                color_mode=color_mode
             )
             test_gen = datagen.flow_from_directory(
                 os.path.join(dataset_dir, "test"),
                 target_size=img_size,
                 batch_size=batch_size,
                 class_mode="categorical",
-                shuffle=False
+                shuffle=False,
+                color_mode=color_mode
             )
 
-            # ✅ Model
-            # ก่อนสร้าง base_model
-            channels = 3  # ถ้า dataset เป็น RGB
-            base_model = EfficientNetB0(weights="imagenet" if channels==3 else None,
-                                        include_top=False,
-                                        input_shape=(*img_size, channels))
+            # Model
+            base_model = EfficientNetB0(
+                weights=weights,
+                include_top=False,
+                input_shape=(*img_size, channels)
+            )
+
             x = GlobalAveragePooling2D()(base_model.output)
             x = Dropout(0.3)(x)
             output = Dense(len(classes_order), activation="softmax")(x)
