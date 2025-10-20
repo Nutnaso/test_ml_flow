@@ -211,7 +211,34 @@ def preprocess_images(
         print("✅ Preprocessing completed. Run ID:", run_id)
         print("Classes mapping:", class_to_idx)
 
+
+        # -----------------------------
+        # 🔹 Save artifacts directly into MLflow run folder
+        # -----------------------------
+        exp_id = run.info.experiment_id
+        run_artifacts_path = mlruns_dir / str(exp_id) / str(run_id) / "artifacts"
+        (run_artifacts_path / "transformers").mkdir(parents=True, exist_ok=True)
+        (run_artifacts_path / "preprocessing").mkdir(parents=True, exist_ok=True)
+
+        # คัดลอก artifacts เข้า run folder โดยตรง
+        shutil.copytree(preproc_dir, run_artifacts_path / "preprocessing", dirs_exist_ok=True)
+        shutil.copytree(transformers_dir, run_artifacts_path / "transformers", dirs_exist_ok=True)
+
+        # log ผ่าน MLflow (ถ้าไม่มี permission ก็ข้ามได้)
+        try:
+            mlflow.log_artifacts(str(run_artifacts_path / "transformers"), artifact_path="transformers")
+            mlflow.log_artifacts(str(run_artifacts_path / "preprocessing"), artifact_path="preprocessing")
+        except Exception as e:
+            print(f"⚠️ Warning: mlflow.log_artifacts failed: {e}")
+
+        # ตรวจสอบว่ามีไฟล์จริง
+        print("🧩 Artifact structure created under:", run_artifacts_path)
+        for sub in ["transformers", "preprocessing"]:
+            subdir = run_artifacts_path / sub
+            print("  ", subdir, "contains:", os.listdir(subdir))
+        
         return datasets_dict, dataloaders
+
 
 
 if __name__ == "__main__":
