@@ -2,6 +2,7 @@ import importlib.util
 import os
 from pathlib import Path
 from shutil import copy
+import mlflow
 
 # สำหรับ PyTorch
 import torch
@@ -36,24 +37,23 @@ def load_module_func(py_path: str, func_name: str):
     return getattr(module, func_name)
 
 def run_preprocessing_test(tmp_path: Path):
-    """ทดสอบ preprocessing ด้วย image test เดียว"""
     preproc_path = resolve_preprocess_path()
     preprocess_images = load_module_func(preproc_path, "preprocess_images")
 
-    # ไฟล์ภาพตัวอย่าง
     image_path = Path("./tests/Amanita_brunnescens/Amanita_brunnescens_101.jpg")
     if not image_path.exists():
         raise FileNotFoundError(f"Test image not found: {image_path}")
 
-    # สร้างโฟลเดอร์ชั่วคราวสำหรับ ImageFolder
     class_name = "Amanita_brunnescens"
     test_dir = tmp_path / "test_images" / "test" / class_name
     test_dir.mkdir(parents=True, exist_ok=True)
-
-    # คัดลอกไฟล์ภาพไปยัง temp folder
     copy(image_path, test_dir / image_path.name)
 
-    # เรียกใช้ preprocess
+    # --- ตั้ง MLflow ให้ใช้ folder ชั่วคราว ---
+    mlruns_dir = tmp_path / "mlruns"
+    mlruns_dir.mkdir(exist_ok=True)
+    mlflow.set_tracking_uri(str(mlruns_dir))
+
     datasets_dict, dataloaders = preprocess_images(
         data_path=str(tmp_path / "test_images"),
         batch_size=1,
@@ -62,12 +62,10 @@ def run_preprocessing_test(tmp_path: Path):
         resize=(224, 224)
     )
 
-    # ตรวจสอบ dataloader
     test_loader = dataloaders.get("test")
     if test_loader is None:
         raise RuntimeError("Test dataloader not created.")
 
-    # ดู batch แรก
     for batch_imgs, batch_labels in test_loader:
         assert batch_imgs.shape[0] == 1
         assert batch_imgs.shape[1:] == (3, 224, 224)
