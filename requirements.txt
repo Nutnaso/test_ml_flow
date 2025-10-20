@@ -9,6 +9,7 @@ openpyxl>=3.1.0
 torch>=2.0.0
 torchvision
 torchaudio
+pathlib
 
 # Deep Learning (EfficientNet)
 tensorflow>=2.15.0

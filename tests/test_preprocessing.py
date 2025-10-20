@@ -39,7 +39,9 @@ def test_preprocess_image(tmp_path):
     preprocess_images = load_module_func(preproc_path, "preprocess_images")
 
     # Act: set image path (แก้ไขให้ใช้ raw string)
-    image_path = Path(r".\tests\Amanita_brunnescens\Amanita_brunnescens_101.jpg")
+    image_path = Path("./tests/Amanita_brunnescens/Amanita_brunnescens_101.jpg")
+
+
     if not image_path.exists():
         raise FileNotFoundError(f"Test image not found: {image_path}")
 
