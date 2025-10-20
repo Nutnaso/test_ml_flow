@@ -113,7 +113,7 @@ def _plot_and_log_confusion(cm: np.ndarray, classes: list, artifact_dir="eval_ar
 
 
 def train_evaluate_register(preprocessing_run_id: str,
-                            dataset_dir: str = "dataset",
+                            dataset_dir: str = "mlops_pipeline/dataset",
                             model_registry_name: str = "Mushroom-EfficientNet",
                             batch_size: int = 16,
                             epochs: int = 1):
@@ -242,6 +242,6 @@ if __name__ == "__main__":
         print("Usage: python 03_train_evaluate_register.py <preprocessing_run_id> [dataset_dir] [registry_name]")
         sys.exit(1)
     run_id = sys.argv[1]
-    dataset_dir = sys.argv[2] if len(sys.argv) > 2 else "dataset"
+    dataset_dir = sys.argv[2] if len(sys.argv) > 2 else "mlops_pipeline/dataset"
     registry_name = sys.argv[3] if len(sys.argv) > 3 else "Mushroom-EfficientNet"
     train_evaluate_register(run_id, dataset_dir, registry_name)
