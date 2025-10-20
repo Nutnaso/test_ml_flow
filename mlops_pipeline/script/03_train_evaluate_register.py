@@ -239,9 +239,11 @@ def train_evaluate_register(preprocessing_run_id: str,
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python 03_train_evaluate_register.py <preprocessing_run_id> [dataset_dir] [registry_name]")
+        print("Usage: python 03_train_evaluate_register.py <preprocessing_run_id> [registry_name]")
         sys.exit(1)
+
     run_id = sys.argv[1]
-    dataset_dir = sys.argv[2] if len(sys.argv) > 2 else "mlops_pipeline/dataset"
-    registry_name = sys.argv[3] if len(sys.argv) > 3 else "Mushroom-EfficientNet"
-    train_evaluate_register(run_id, dataset_dir, registry_name)
+    # dataset_dir ใช้ default ในฟังก์ชัน train_evaluate_register()
+    registry_name = sys.argv[2] if len(sys.argv) > 2 else "Mushroom-EfficientNet"
+    train_evaluate_register(run_id, model_registry_name=registry_name)
+
