@@ -10,7 +10,6 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, WeightedRandomSampler
 import joblib
 
-
 def preprocess_images(
     data_path: str = "dataset",
     batch_size: int = 32,
@@ -20,8 +19,13 @@ def preprocess_images(
 ):
     """Prepare DataLoaders for train/val/test with augmentation & class balancing."""
 
-    # ใช้ absolute path สำหรับ mlflow tracking
-    mlflow.set_tracking_uri(f"file:{os.path.abspath('./mlruns')}")
+    # -----------------------------
+    # ตั้ง MLflow tracking URI แบบ cross-platform
+    # -----------------------------
+    workspace_dir = os.getenv("GITHUB_WORKSPACE", os.getcwd())
+    mlruns_dir = os.path.join(workspace_dir, "mlruns")
+    os.makedirs(mlruns_dir, exist_ok=True)
+    mlflow.set_tracking_uri(f"file:{mlruns_dir}")
     mlflow.set_experiment(experiment_name)
 
     with mlflow.start_run() as run:
@@ -32,7 +36,9 @@ def preprocess_images(
         mlflow.log_param("num_workers", num_workers)
         mlflow.log_param("resize", resize)
 
+        # -----------------------------
         # Augmentation transforms for train
+        # -----------------------------
         train_transform = transforms.Compose([
             transforms.Resize(resize),
             transforms.RandomHorizontalFlip(p=0.5),
@@ -44,7 +50,9 @@ def preprocess_images(
                                  [0.229, 0.224, 0.225])
         ])
 
+        # -----------------------------
         # Validation/test transforms (no augmentation)
+        # -----------------------------
         eval_transform = transforms.Compose([
             transforms.Resize(resize),
             transforms.ToTensor(),
@@ -90,37 +98,42 @@ def preprocess_images(
             dataloaders[split] = dl
             mlflow.log_metric(f"{split}_num_images", len(ds))
 
+        # -----------------------------
         # Save class mapping
+        # -----------------------------
         if "train" in datasets_dict:
             class_to_idx = datasets_dict["train"].class_to_idx
         else:
             class_to_idx = next(iter(datasets_dict.values())).class_to_idx
 
-        os.makedirs("preprocessing_artifacts", exist_ok=True)
-        with open("preprocessing_artifacts/class_to_idx.json", "w", encoding="utf-8") as f:
+        # -----------------------------
+        # Save preprocessing artifacts
+        # -----------------------------
+        preproc_dir = os.path.join(workspace_dir, "preprocessing_artifacts")
+        os.makedirs(preproc_dir, exist_ok=True)
+        with open(os.path.join(preproc_dir, "class_to_idx.json"), "w", encoding="utf-8") as f:
             json.dump(class_to_idx, f, indent=2)
 
-        # Save transforms config
         transform_config = {
             "resize": resize,
             "normalize_mean": [0.485, 0.456, 0.406],
             "normalize_std": [0.229, 0.224, 0.225],
             "augmentation": True
         }
-        with open("preprocessing_artifacts/transforms.json", "w", encoding="utf-8") as f:
+        with open(os.path.join(preproc_dir, "transforms.json"), "w", encoding="utf-8") as f:
             json.dump(transform_config, f, indent=2)
 
-        # =====================
+        # -----------------------------
         # Save label encoder
-        # =====================
-        os.makedirs("transformers", exist_ok=True)
+        # -----------------------------
+        transformers_dir = os.path.join(workspace_dir, "transformers")
+        os.makedirs(transformers_dir, exist_ok=True)
         label_encoder_obj = {"classes_": list(class_to_idx.keys())}
-        joblib.dump(label_encoder_obj, "transformers/label_encoder.pkl")
+        joblib.dump(label_encoder_obj, os.path.join(transformers_dir, "label_encoder.pkl"))
 
-        # ใช้ absolute path สำหรับ mlflow log artifacts
-        transformers_dir = os.path.abspath("transformers")
-        preproc_dir = os.path.abspath("preprocessing_artifacts")
-
+        # -----------------------------
+        # Log artifacts to MLflow (ใช้ absolute path)
+        # -----------------------------
         mlflow.log_artifacts(transformers_dir, artifact_path="transformers")
         mlflow.log_artifacts(preproc_dir, artifact_path="preprocessing")
 
