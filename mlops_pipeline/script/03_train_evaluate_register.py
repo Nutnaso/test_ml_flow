@@ -10,6 +10,7 @@ import mlflow
 import mlflow.tensorflow
 import numpy as np
 import matplotlib.pyplot as plt
+import shutil
 from mlflow.artifacts import download_artifacts
 from sklearn.metrics import classification_report, confusion_matrix
 from tensorflow.keras.applications import EfficientNetB0
@@ -23,6 +24,7 @@ from PIL import Image
 from pathlib import Path
 
 DEF_EXPERIMENT = "Mushroom - EfficientNet Training"
+
 
 # --- Auto detect image channels from dataset ---
 def detect_image_channels(dataset_dir: str):
@@ -51,6 +53,7 @@ def detect_image_channels(dataset_dir: str):
     print(f"✅ Detected image mode: {mode}, using channels={channels}, weights={weights}")
     return channels, weights, color_mode
 
+
 # --- Safe artifact download ---
 def _safe_download_artifact(run_id: str, artifact_path: str):
     try:
@@ -61,6 +64,7 @@ def _safe_download_artifact(run_id: str, artifact_path: str):
         print(f"⚠️ Warning: Artifact '{artifact_path}' not found in run {run_id}")
         print("⚠️ Exception:", e)
         return None
+
 
 # --- Load preprocessing artifacts ---
 def _load_artifacts_from_preprocessing_run(run_id: str):
@@ -82,6 +86,9 @@ def _load_artifacts_from_preprocessing_run(run_id: str):
         else:
             print("❌ No local fallback artifacts found in mlruns.")
 
+    if not local_transformers or not local_preproc:
+        raise FileNotFoundError("❌ Could not find preprocessing artifacts (transformers/preprocessing)")
+
     label_encoder_path = local_transformers / "label_encoder.pkl"
     transform_config_path = local_preproc / "transforms.json"
 
@@ -99,13 +106,17 @@ def _load_artifacts_from_preprocessing_run(run_id: str):
 
     return label_encoder_obj, transform_config
 
+
 # --- Helper: log artifact safely ---
 def _safe_log_artifact(file_path: Path, artifact_path: str = "evaluation"):
-    """Safely log artifact across OS (Windows, Linux, macOS, GitHub Actions)."""
+    """
+    Safely log artifact across OS (Windows, Linux, macOS, GitHub Actions).
+    Ensures artifact is inside workspace; if not, copy it into workspace/eval_artifacts.
+    """
     try:
         file_path = Path(file_path)
 
-        # Ensure absolute path & readable
+        # Exists & readable?
         if not file_path.exists():
             print(f"⚠️ File not found, skipping: {file_path}")
             return
@@ -113,34 +124,57 @@ def _safe_log_artifact(file_path: Path, artifact_path: str = "evaluation"):
             print(f"⚠️ No read permission for {file_path}, skipping log.")
             return
 
-        # Resolve workspace
+        # Determine workspace (prefer GITHUB_WORKSPACE if set)
         workspace = Path(os.getenv("GITHUB_WORKSPACE", Path.cwd())).resolve()
 
-        # Normalize path (fix 'C:\' or '/C:' issues)
+        # Normalize to forward slashes
         file_str = str(file_path).replace("\\", "/")
+
+        # Remove Windows drive letter when running on non-Windows
         if ":" in file_str and not platform.system().lower().startswith("win"):
-            # Remove Windows-style drive letter on Linux/macOS
-            file_str = file_str.split(":", 1)[-1]
-            file_str = file_str.lstrip("/")
+            # Example: C:/foo/bar -> /foo/bar -> strip leading slash => foo/bar
+            file_str = file_str.split(":", 1)[-1].lstrip("/")
 
-        safe_path = workspace / Path(file_str)
-        safe_path.parent.mkdir(parents=True, exist_ok=True)
+        candidate = Path(file_str)
 
-        # Copy file into safe workspace location if outside
-        if not str(file_path).startswith(str(workspace)):
-            temp_path = workspace / "eval_artifacts" / file_path.name
-            temp_path.parent.mkdir(parents=True, exist_ok=True)
-            import shutil
-            shutil.copy2(file_path, temp_path)
-            safe_path = temp_path
+        # If candidate is already inside workspace (by path prefix), use as-is
+        try:
+            candidate_resolved = candidate.resolve()
+        except Exception:
+            candidate_resolved = candidate
 
+        inside_workspace = False
+        try:
+            inside_workspace = str(candidate_resolved).startswith(str(workspace))
+        except Exception:
+            inside_workspace = False
+
+        # If file is already inside workspace, just log it directly (use resolved path)
+        if inside_workspace:
+            safe_path = candidate_resolved
+        else:
+            # copy into workspace/eval_artifacts
+            dest_dir = workspace / "eval_artifacts"
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            temp_path = dest_dir / file_path.name
+
+            # Avoid copying onto itself
+            try:
+                if file_path.resolve() == temp_path.resolve():
+                    safe_path = temp_path
+                else:
+                    shutil.copy2(file_path, temp_path)
+                    safe_path = temp_path
+            except Exception:
+                # fallback: if copy failed for any reason, try using original path but will likely fail on mlflow log
+                safe_path = file_path.resolve()
+
+        # Finally compute relative path (relative to workspace) and log artifact
         rel_path = os.path.relpath(safe_path, workspace)
         print(f"📦 Logging artifact: {rel_path} → {artifact_path}")
         mlflow.log_artifact(str(safe_path), artifact_path=artifact_path)
-
     except Exception as e:
         print(f"⚠️ Failed to log artifact safely ({file_path}): {e}")
-
 
 
 # --- Plot and log confusion matrix ---
@@ -164,6 +198,7 @@ def _plot_and_log_confusion(cm: np.ndarray, classes: list, artifact_dir="eval_ar
     plt.close(fig)
     _safe_log_artifact(path)
 
+
 # --- Main training function ---
 def train_evaluate_register(preprocessing_run_id: str,
                             dataset_dir: str = "mlops_pipeline/dataset",
@@ -174,9 +209,14 @@ def train_evaluate_register(preprocessing_run_id: str,
     device = "/GPU:0" if gpus else "/CPU:0"
     print(f"✅ Using device: {device}")
 
-    mlruns_path = Path.cwd() / "mlruns"
+    # workspace & mlruns (ensure mlruns inside workspace, not absolute weird path)
+    workspace = Path(os.getenv("GITHUB_WORKSPACE", Path.cwd())).resolve()
+    mlruns_path = workspace / "mlruns"
     mlruns_path.mkdir(parents=True, exist_ok=True)
-    mlflow.set_tracking_uri(f"file://{mlruns_path.resolve()}")
+
+    # Set MLflow tracking to workspace-local mlruns (file URI)
+    # On Windows file URI with drive letter is okay; on Linux this is normal.
+    mlflow.set_tracking_uri(f"file://{mlruns_path}")
     mlflow.set_experiment(DEF_EXPERIMENT)
 
     label_encoder_obj, transform_config = _load_artifacts_from_preprocessing_run(preprocessing_run_id)
@@ -185,7 +225,7 @@ def train_evaluate_register(preprocessing_run_id: str,
         raise ValueError("❌ classes_ is empty in label_encoder.pkl")
 
     img_size = tuple(transform_config.get("resize", (256, 256)))
-    eval_dir = Path("eval_artifacts")
+    eval_dir = workspace / "eval_artifacts"
     eval_dir.mkdir(parents=True, exist_ok=True)
 
     with tf.device(device):
@@ -215,21 +255,21 @@ def train_evaluate_register(preprocessing_run_id: str,
             test_datagen = ImageDataGenerator(rescale=1./255)
 
             train_gen = train_datagen.flow_from_directory(
-                Path(dataset_dir) / "train",
+                str(Path(dataset_dir) / "train"),
                 target_size=img_size,
                 batch_size=batch_size,
                 class_mode="categorical",
                 color_mode=color_mode
             )
             val_gen = val_datagen.flow_from_directory(
-                Path(dataset_dir) / "val",
+                str(Path(dataset_dir) / "val"),
                 target_size=img_size,
                 batch_size=batch_size,
                 class_mode="categorical",
                 color_mode=color_mode
             )
             test_gen = test_datagen.flow_from_directory(
-                Path(dataset_dir) / "test",
+                str(Path(dataset_dir) / "test"),
                 target_size=img_size,
                 batch_size=batch_size,
                 class_mode="categorical",
@@ -287,19 +327,37 @@ def train_evaluate_register(preprocessing_run_id: str,
             cm = confusion_matrix(y_true, y_pred)
             _plot_and_log_confusion(cm, classes=list(classes_order))
 
-            # Classification report
-            report_txt = classification_report(y_true, y_pred, target_names=list(classes_order))
+            # Classification report (avoid undefined metric warning)
+            report_txt = classification_report(y_true, y_pred, target_names=list(classes_order), zero_division=0)
             report_path = eval_dir / "classification_report.txt"
             with open(report_path, "w", encoding="utf-8") as f:
                 f.write(report_txt)
             _safe_log_artifact(report_path)
 
             # Register model
-            mlflow.tensorflow.log_model(model=model,
-                                        artifact_path="efficientnet_model",
-                                        registered_model_name=model_registry_name)
+            # Ensure model logging runs with cwd inside workspace to avoid MLflow producing Windows-style absolute paths
+            original_cwd = Path.cwd()
+            try:
+                os.chdir(workspace)
+                # Optionally add input_example/signature here if you have sample tensors/arrays
+                try:
+                    # If test_gen yields images, create a small input_example for signature (best-effort)
+                    x_example, _ = next(test_gen)
+                    # log_model will internally save model files under workspace and then mlflow will collect them
+                    mlflow.tensorflow.log_model(model=model,
+                                                artifact_path="efficientnet_model",
+                                                registered_model_name=model_registry_name,
+                                                input_example=x_example[:1])
+                except Exception:
+                    # fallback without input example
+                    mlflow.tensorflow.log_model(model=model,
+                                                artifact_path="efficientnet_model",
+                                                registered_model_name=model_registry_name)
+            finally:
+                os.chdir(original_cwd)
 
             print(f"🎉 Training complete. Test accuracy: {acc:.4f}")
+
 
 # --- Main entry point ---
 if __name__ == "__main__":
