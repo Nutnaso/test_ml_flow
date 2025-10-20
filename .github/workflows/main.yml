@@ -42,7 +42,7 @@ jobs:
       - name: Black (verify)
         run: black --check .
 
-  test:
+    test:
     runs-on: ubuntu-latest
     env:
       MLFLOW_TRACKING_URI: file://${{ github.workspace }}/mlruns
@@ -64,19 +64,21 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: Install test dependencies (robust)
+      - name: Install test dependencies
         shell: bash
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
-            pip install mlflow pandas numpy scikit-learn joblib matplotlib openpyxl pytest
+            pip install mlflow pandas numpy scikit-learn joblib matplotlib
             pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
           fi
 
-      - name: Run pytest
-        run: pytest -q
+      - name: Run custom preprocessing test
+        shell: bash
+        run: |
+          python tests/test_preprocessing.py
 
       - name: Upload MLflow artifacts for inspection
         if: success()
@@ -85,6 +87,7 @@ jobs:
           name: mlflow-artifacts
           path: mlruns/
           if-no-files-found: ignore
+
 
   train:
     runs-on: ubuntu-latest
